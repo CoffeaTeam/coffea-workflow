@@ -9,12 +9,13 @@ Pure-logic helpers tested without touching the filesystem or coffea:
 """
 import json
 import pytest
+import cloudpickle
 from pathlib import Path
 from unittest.mock import MagicMock, patch
- 
+
 from workflow.producers_utils import _call_builder, _load_object, _split_fileset
-from workflow.default_producers import make_fileset
-from workflow.artifacts import Fileset
+from workflow.default_producers import make_fileset, split_fileset
+from workflow.artifacts import Fileset, Chunking, CustomArtifact
 from workflow.config import RunConfig
 from workflow.deps import Deps
  
@@ -260,3 +261,70 @@ class TestMakeFileset:
  
         with pytest.raises(TypeError, match="Fileset builder must return a dict"):
             make_fileset(art=art, deps=deps, out=out, config=cfg)
+
+
+# ---------------------------------------------------------------------------
+# split_fileset producer with non-Fileset upstream (CustomArtifact)
+# ---------------------------------------------------------------------------
+
+class TestSplitFilesetProducerWithCustomUpstream:
+    def _make_custom_upstream(self, tmp_path, payload):
+        """Write payload.pkl for a CustomArtifact and return a Deps mock pointing to it."""
+        upstream_dir = tmp_path / "upstream"
+        upstream_dir.mkdir()
+        (upstream_dir / "payload.pkl").write_bytes(cloudpickle.dumps(payload))
+
+        fs = Fileset(name="fs", builder="mod:fn")
+        custom_art = CustomArtifact(name="filtered", builder="mod:filter", upstreams=(fs,))
+        chunking = Chunking(fileset=custom_art, split_strategy=None, percentage=None)
+
+        deps = MagicMock(spec=Deps)
+        deps.need.return_value = upstream_dir
+        return chunking, deps
+
+    def test_splits_fileset_from_custom_artifact_payload(self, tmp_path):
+        fileset = {
+            "A": {"files": {"a1.root": "T", "a2.root": "T"}},
+            "B": {"files": {"b1.root": "T"}},
+        }
+        chunking, deps = self._make_custom_upstream(tmp_path, fileset)
+        out = tmp_path / "out"
+        cfg = RunConfig(cache_dir=tmp_path)
+
+        split_fileset(art=chunking, deps=deps, out=out, config=cfg)
+
+        manifest = json.loads((out / "manifest.json").read_text())
+        assert manifest["n_chunks"] == 1
+        chunk = json.loads((out / manifest["output_files"]["0"]).read_text())
+        assert set(chunk.keys()) == {"A", "B"}
+
+    def test_by_dataset_strategy_with_custom_artifact(self, tmp_path):
+        fileset = {
+            "A": {"files": {"a1.root": "T"}},
+            "B": {"files": {"b1.root": "T"}},
+        }
+        fs = Fileset(name="fs", builder="mod:fn")
+        custom_art = CustomArtifact(name="filtered", builder="mod:filter", upstreams=(fs,))
+        chunking = Chunking(fileset=custom_art, split_strategy="by_dataset", percentage=None)
+
+        upstream_dir = tmp_path / "upstream"
+        upstream_dir.mkdir()
+        (upstream_dir / "payload.pkl").write_bytes(cloudpickle.dumps(fileset))
+
+        deps = MagicMock(spec=Deps)
+        deps.need.return_value = upstream_dir
+        out = tmp_path / "out"
+        cfg = RunConfig(cache_dir=tmp_path, strategy="by_dataset")
+
+        split_fileset(art=chunking, deps=deps, out=out, config=cfg)
+
+        manifest = json.loads((out / "manifest.json").read_text())
+        assert manifest["n_chunks"] == 2
+
+    def test_raises_type_error_when_payload_is_not_dict(self, tmp_path):
+        chunking, deps = self._make_custom_upstream(tmp_path, ["not", "a", "fileset"])
+        out = tmp_path / "out"
+        cfg = RunConfig(cache_dir=tmp_path)
+
+        with pytest.raises(TypeError, match="must produce a fileset dict"):
+            split_fileset(art=chunking, deps=deps, out=out, config=cfg)

@@ -86,7 +86,7 @@ class Chunking(ArtifactBase):
             fileset_chunk_1.json
             ...
     """
-    fileset: Fileset
+    fileset: ArtifactBase
     split_strategy: str | None
     percentage: int | None
     datasets: tuple[str, ...] | None = None
@@ -142,13 +142,13 @@ class Analysis(ArtifactBase):
     - .cache/Analysis/<analysis_identity>/payload.pkl (with merged output)
     """
     name: str
-    fileset: Fileset
+    fileset: ArtifactBase
     builder: str | Callable
     builder_params: tuple = ()
-     
+
     def __post_init__(self):
         object.__setattr__(self, 'builder_params', _to_params_tuple(self.builder_params))
- 
+
 
     def keys(self):
         return {
@@ -164,7 +164,7 @@ class Plotting(ArtifactBase):
     always_rerun = True
 
     name: str
-    analysis: "Analysis"
+    analysis: ArtifactBase
     builder: str | Callable
     builder_params: tuple = ()
      

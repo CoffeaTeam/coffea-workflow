@@ -16,6 +16,7 @@ from workflow.artifacts import (
     ChunkAnalysis,
     Analysis,
     Plotting,
+    CustomArtifact,
     ARTIFACT_REGISTRY,
     ArtifactBase,
 )
@@ -355,7 +356,68 @@ class TestArtifactRegistry:
     @pytest.mark.parametrize("name", ["Fileset", "Chunking", "ChunkAnalysis", "Analysis", "Plotting"])
     def test_type_is_registered(self, name):
         assert name in ARTIFACT_REGISTRY
- 
+
     def test_registry_values_are_artifact_base_subclasses(self):
         for cls in ARTIFACT_REGISTRY.values():
             assert issubclass(cls, ArtifactBase)
+
+
+# ---------------------------------------------------------------------------
+# Flexible upstream: CustomArtifact as fileset / analysis
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def custom_fileset_art():
+    fs = Fileset(name="fs", builder="mod:fn")
+    return CustomArtifact(name="my_filter", builder="mod:filter", upstreams=(fs,))
+
+
+class TestChunkingAcceptsCustomArtifact:
+    def test_custom_artifact_accepted_as_fileset(self, custom_fileset_art):
+        ch = Chunking(fileset=custom_fileset_art, split_strategy=None, percentage=None)
+        assert ch.fileset is custom_fileset_art
+
+    def test_identity_differs_from_plain_fileset(self, custom_fileset_art):
+        fs = Fileset(name="fs", builder="mod:fn")
+        ch_plain = Chunking(fileset=fs, split_strategy=None, percentage=None)
+        ch_custom = Chunking(fileset=custom_fileset_art, split_strategy=None, percentage=None)
+        assert ch_plain.identity() != ch_custom.identity()
+
+    def test_identity_deterministic_with_custom_upstream(self, custom_fileset_art):
+        ch1 = Chunking(fileset=custom_fileset_art, split_strategy=None, percentage=None)
+        ch2 = Chunking(fileset=custom_fileset_art, split_strategy=None, percentage=None)
+        assert ch1.identity() == ch2.identity()
+
+
+class TestAnalysisAcceptsCustomArtifact:
+    def test_custom_artifact_accepted_as_fileset(self, custom_fileset_art):
+        an = Analysis(name="an", fileset=custom_fileset_art, builder="mod:run")
+        assert an.fileset is custom_fileset_art
+
+    def test_identity_differs_from_plain_fileset(self, custom_fileset_art):
+        fs = Fileset(name="fs", builder="mod:fn")
+        an_plain = Analysis(name="an", fileset=fs, builder="mod:run")
+        an_custom = Analysis(name="an", fileset=custom_fileset_art, builder="mod:run")
+        assert an_plain.identity() != an_custom.identity()
+
+    def test_identity_deterministic_with_custom_upstream(self, custom_fileset_art):
+        an1 = Analysis(name="an", fileset=custom_fileset_art, builder="mod:run")
+        an2 = Analysis(name="an", fileset=custom_fileset_art, builder="mod:run")
+        assert an1.identity() == an2.identity()
+
+
+class TestPlottingAcceptsCustomArtifact:
+    def test_custom_artifact_accepted_as_analysis(self, custom_fileset_art):
+        fs = Fileset(name="fs", builder="mod:fn")
+        analysis = Analysis(name="an", fileset=fs, builder="mod:run")
+        post_custom = CustomArtifact(name="post", builder="mod:post", upstreams=(analysis,))
+        pl = Plotting(name="p", analysis=post_custom, builder="mod:plot")
+        assert pl.analysis is post_custom
+
+    def test_identity_differs_from_plain_analysis(self):
+        fs = Fileset(name="fs", builder="mod:fn")
+        analysis = Analysis(name="an", fileset=fs, builder="mod:run")
+        post_custom = CustomArtifact(name="post", builder="mod:post", upstreams=(analysis,))
+        pl_plain = Plotting(name="p", analysis=analysis, builder="mod:plot")
+        pl_custom = Plotting(name="p", analysis=post_custom, builder="mod:plot")
+        assert pl_plain.identity() != pl_custom.identity()

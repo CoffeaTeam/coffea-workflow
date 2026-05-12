@@ -26,7 +26,12 @@ def make_fileset(*, art: Fileset, deps: Deps, out: Path, config: RunConfig) -> N
 @producer(Chunking)
 def split_fileset(*, art: Chunking, deps: Deps, out: Path, config: RunConfig) -> None:
     out.mkdir(parents=True, exist_ok=True)
-    fileset = json.loads((deps.need(art.fileset) / "fileset.json").read_text())
+    fileset = _load_artifact_output(art.fileset, deps.need(art.fileset))
+    if not isinstance(fileset, dict):
+        raise TypeError(
+            f"Upstream artifact '{art.fileset.type_name}' must produce a fileset dict, "
+            f"got {type(fileset).__name__}"
+        )
 
     chunks = _split_fileset(
         fileset,
