@@ -8,7 +8,7 @@ from .deps import Deps
 from .producers import producer
 from .config import RunConfig
 from coffea.processor import accumulate
-from .producers_utils import _call_builder, _extract_acc, _load_object, _split_fileset, _load_artifact_output
+from .producers_utils import _call_builder, _extract_acc, _load_object, _split_fileset, _load_artifact_output, build_executor
 
 @producer(Fileset)
 def make_fileset(*, art: Fileset, deps: Deps, out: Path, config: RunConfig) -> None:
@@ -65,7 +65,9 @@ def run_analysis(*, art: ChunkAnalysis, deps: Deps, out: Path, config: RunConfig
     chunk_fileset = json.loads(chunk_path.read_text())
 
     fn = _load_object(art.analysis_builder)  # user's function
-    result = _call_builder(fn, chunk_fileset, config=config, builder_params=dict(art.builder_params))
+    executor = build_executor(config.executor_config) if config.executor_config is not None else None
+    result = _call_builder(fn, chunk_fileset, config=config, executor=executor,
+                           builder_params=dict(art.builder_params))
 
     (out / "payload.pkl").write_bytes(cloudpickle.dumps(result))
     if result.is_ok():

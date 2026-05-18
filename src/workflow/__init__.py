@@ -1,5 +1,5 @@
 from .workflow import Step, Workflow
-from .artifacts import Fileset, Analysis, Plotting
+from .artifacts import Fileset, Analysis, Plotting, CustomArtifact
 from .config import RunConfig
 from .render import render
 from . import default_producers

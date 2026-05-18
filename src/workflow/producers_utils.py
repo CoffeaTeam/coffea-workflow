@@ -3,10 +3,9 @@ from .config import RunConfig
 import importlib
 import math
 from typing import Any
-from path import Path
 
 
-def _call_builder(fn, *args, config=None, out=None, builder_params=None):
+def _call_builder(fn, *args, config=None, out=None, builder_params=None, executor=None):
     """
     Call fn(*args), injecting config as a kwarg if the function accepts it.
     For example, user uses client histserv in analysis function.
@@ -17,6 +16,8 @@ def _call_builder(fn, *args, config=None, out=None, builder_params=None):
         kwargs["config"] = config
     if out is not None and "out" in sig:
         kwargs["out"] = out
+    if executor is not None and "executor" in sig:
+        kwargs["executor"] = executor
     if builder_params:
         for k, v in builder_params.items():
             if k in sig:
@@ -24,7 +25,23 @@ def _call_builder(fn, *args, config=None, out=None, builder_params=None):
         print(f"\nkwargs: {kwargs}")
     return fn(*args, **kwargs)
 
-def _load_artifact_output(art, path: Path):
+
+def build_executor(ec: "ExecutorConfig"):
+    """Return a coffea executor from an ExecutorConfig."""
+    from coffea.processor import IterativeExecutor, FuturesExecutor, DaskExecutor
+    if ec.executor is not None:
+        return ec.executor
+    if ec.executor_type == "IterativeExecutor":
+        return IterativeExecutor()
+    elif ec.executor_type == "FuturesExecutor":
+        return FuturesExecutor(workers=ec.workers)
+    elif ec.executor_type == "DaskExecutor":
+        #TODO: if coffea-casa
+        from dask.distributed import Client
+        return DaskExecutor(client=Client(ec.dask_scheduler))
+
+
+def _load_artifact_output(art, path):
     """
     Load the payload of any materialized artifact generically.
     """

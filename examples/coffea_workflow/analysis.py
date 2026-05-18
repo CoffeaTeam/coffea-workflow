@@ -29,6 +29,14 @@ def get_fileset(to_print=None):
           }
     return fileset
 
+def custom_function_remove_last_file(fileset):
+    fileset = fileset[0]
+    for key in fileset:
+        files = fileset[key]["files"]
+        if files:
+            last_key = list(files.keys())[-1]
+            del files[last_key]
+    return fileset
 
 class Processor(processor.ProcessorABC):
     def __init__(self):

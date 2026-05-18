@@ -9,7 +9,7 @@ RunConfig is a frozen dataclass. __post_init__ validates:
 """
 import pytest
 from pathlib import Path
-from workflow.config import RunConfig
+from workflow.config import RunConfig, ExecutorConfig
  
  
 class TestRunConfigDefaults:
@@ -128,3 +128,72 @@ class TestRunConfigFrozen:
         cfg = RunConfig()
         with pytest.raises(Exception):
             cfg.cache_dir = Path("/new/path")
+
+
+# ---------------------------------------------------------------------------
+# ExecutorConfig
+# ---------------------------------------------------------------------------
+
+class TestExecutorConfigDefaults:
+    def test_executor_type_default(self):
+        assert ExecutorConfig().executor_type == "FuturesExecutor"
+
+    def test_workers_default(self):
+        assert ExecutorConfig().workers == 1
+
+    def test_chunks_per_worker_default(self):
+        assert ExecutorConfig().chunks_per_worker == 1
+
+    def test_dask_scheduler_default_is_none(self):
+        assert ExecutorConfig().dask_scheduler is None
+
+    def test_executor_override_default_is_none(self):
+        assert ExecutorConfig().executor is None
+
+
+class TestExecutorConfigValidation:
+    def test_invalid_executor_type_raises(self):
+        with pytest.raises(ValueError, match="Invalid executor_type"):
+            ExecutorConfig(executor_type="spark")
+
+    def test_dask_without_scheduler_raises(self):
+        with pytest.raises(ValueError, match="dask_scheduler"):
+            ExecutorConfig(executor_type="DaskExecutor")
+
+    def test_dask_with_scheduler_ok(self):
+        ec = ExecutorConfig(executor_type="DaskExecutor", dask_scheduler="tcp://host:8786")
+        assert ec.dask_scheduler == "tcp://host:8786"
+
+    def test_workers_zero_raises(self):
+        with pytest.raises(ValueError, match="workers"):
+            ExecutorConfig(workers=0)
+
+    def test_workers_negative_raises(self):
+        with pytest.raises(ValueError, match="workers"):
+            ExecutorConfig(workers=-1)
+
+    def test_chunks_per_worker_zero_raises(self):
+        with pytest.raises(ValueError, match="chunks_per_worker"):
+            ExecutorConfig(chunks_per_worker=0)
+
+    def test_raw_executor_skips_all_validation(self):
+        from unittest.mock import MagicMock
+        fake = MagicMock()
+        # executor_type would normally fail, but is ignored when executor is set
+        ec = ExecutorConfig(executor_type="spark", workers=-99, executor=fake)
+        assert ec.executor is fake
+
+
+class TestRunConfigExecutorConfig:
+    def test_default_executor_config_is_none(self):
+        assert RunConfig().executor_config is None
+
+    def test_stores_executor_config(self):
+        ec = ExecutorConfig(executor_type="IterativeExecutor")
+        cfg = RunConfig(executor_config=ec)
+        assert cfg.executor_config is ec
+
+    def test_frozen_executor_config_field(self):
+        cfg = RunConfig()
+        with pytest.raises(Exception):
+            cfg.executor_config = ExecutorConfig()

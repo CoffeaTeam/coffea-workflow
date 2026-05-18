@@ -2,7 +2,8 @@
 This module contains functions that are applied to the DAG by snakemake_render
 """
 
-from .producers_utils import _call_builder, _extract_acc, _load_object, _split_fileset
+from .producers_utils import _call_builder, _extract_acc, _load_object, _split_fileset, build_executor
+
 from typing import Any
 from pathlib import Path
 from .config import RunConfig
@@ -42,7 +43,6 @@ def split_fileset_standalone(
     """
     fileset = json.loads(Path(fileset_path).read_text())
     chunks = _split_fileset(fileset, strategy=strategy, datasets=datasets, percentage=percentage)
-    out_dir_meta = Path('results/split_metadata')
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     manifest_files = {}
@@ -50,8 +50,7 @@ def split_fileset_standalone(
         fname = f"chunk_{i}.json"
         (out_dir / fname).write_text(json.dumps(chunk, indent=2, sort_keys=True))
         manifest_files[str(i)] = fname
-    out_dir_meta.mkdir(parents=True, exist_ok=True)
-    (out_dir_meta / "manifest.json").write_text(
+    (out_dir / "manifest.json").write_text(
         json.dumps({"output_files": manifest_files, "n_chunks": len(chunks)}, indent=2, sort_keys=True)
     )
 
@@ -76,7 +75,8 @@ def run_chunk_analysis_standalone(
     chunk_fileset = json.loads(Path(chunk_path).read_text())
     try:
         print("Before runner")
-        result = _call_builder(fn, chunk_fileset, config=config, builder_params=builder_params)
+        executor = build_executor(config.executor_config) if (config is not None and config.executor_config is not None) else None
+        result = _call_builder(fn, chunk_fileset, config=config, executor=executor, builder_params=builder_params)
         print("After runner")
         status = "ok" if result.is_ok() else f"failed: {result}"
     except Exception as exc:
@@ -151,4 +151,4 @@ def make_plot_standalone(
     else:
         plot_result = _call_builder(fn, payload, builder_params=builder_params)
     
-    # out_path.write_bytes(cloudpickle.dumps(plot_result))
+    out_path.write_bytes(cloudpickle.dumps(plot_result))
