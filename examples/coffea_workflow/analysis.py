@@ -64,9 +64,8 @@ class Processor(processor.ProcessorABC):
     def postprocess(self, accumulator):
         pass
 
-def run_analysis(fileset):
-    executor_inst = processor.FuturesExecutor()
-    run = processor.Runner(executor=executor_inst, schema=schemas.NanoAODSchema, savemetrics=False,
+def run_analysis(fileset, executor=None):
+    run = processor.Runner(executor=executor, schema=schemas.NanoAODSchema, savemetrics=False,
                         use_result_type=True)
     result = run(fileset, Processor())
     return result

@@ -1,6 +1,6 @@
 from .workflow import Step, Workflow
 from .artifacts import Fileset, Analysis, Plotting, CustomArtifact
-from .config import RunConfig
+from .config import RunConfig, ExecutorConfig
 from .render import render
 from . import default_producers
 from .snakemake_producers import (

@@ -13,10 +13,10 @@ import cloudpickle
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from workflow.producers_utils import _call_builder, _load_object, _split_fileset
+from workflow.producers_utils import _call_builder, _load_object, _split_fileset, build_executor
 from workflow.default_producers import make_fileset, split_fileset
 from workflow.artifacts import Fileset, Chunking, CustomArtifact
-from workflow.config import RunConfig
+from workflow.config import RunConfig, ExecutorConfig
 from workflow.deps import Deps
  
  
@@ -328,3 +328,57 @@ class TestSplitFilesetProducerWithCustomUpstream:
 
         with pytest.raises(TypeError, match="must produce a fileset dict"):
             split_fileset(art=chunking, deps=deps, out=out, config=cfg)
+
+
+# ---------------------------------------------------------------------------
+# _call_builder executor injection
+# ---------------------------------------------------------------------------
+
+class TestCallBuilderExecutorInjection:
+    def test_injects_executor_when_fn_accepts_it(self):
+        received = {}
+
+        def fn(x, executor=None):
+            received["executor"] = executor
+            return x
+
+        fake_executor = object()
+        _call_builder(fn, "data", executor=fake_executor)
+        assert received["executor"] is fake_executor
+
+    def test_does_not_inject_executor_when_fn_omits_it(self):
+        def fn(x):
+            return x * 2
+
+        # Would raise TypeError if executor were injected
+        assert _call_builder(fn, 3, executor=object()) == 6
+
+    def test_executor_none_never_injected(self):
+        def fn(x, executor=None):
+            return executor
+
+        assert _call_builder(fn, "ignored", executor=None) is None
+
+
+# ---------------------------------------------------------------------------
+# build_executor
+# ---------------------------------------------------------------------------
+
+class TestBuildExecutor:
+    def test_iterative_returns_iterative_executor(self):
+        from coffea.processor import IterativeExecutor
+        ec = ExecutorConfig(executor_type="IterativeExecutor")
+        result = build_executor(ec)
+        assert isinstance(result, IterativeExecutor)
+
+    def test_futures_returns_futures_executor(self):
+        from coffea.processor import FuturesExecutor
+        ec = ExecutorConfig(executor_type="FuturesExecutor", workers=2)
+        result = build_executor(ec)
+        assert isinstance(result, FuturesExecutor)
+
+    def test_raw_executor_returned_unchanged(self):
+        from unittest.mock import MagicMock
+        fake = MagicMock()
+        ec = ExecutorConfig(executor=fake)
+        assert build_executor(ec) is fake
