@@ -9,7 +9,7 @@ RunConfig is a frozen dataclass. __post_init__ validates:
 """
 import pytest
 from pathlib import Path
-from workflow.config import RunConfig, ExecutorConfig
+from workflow.config import RunConfig, ExecutorConfig, FacilityConfig
  
  
 class TestRunConfigDefaults:
@@ -156,9 +156,11 @@ class TestExecutorConfigValidation:
         with pytest.raises(ValueError, match="Invalid executor_type"):
             ExecutorConfig(executor_type="spark")
 
-    def test_dask_without_scheduler_raises(self):
-        with pytest.raises(ValueError, match="dask_scheduler"):
-            ExecutorConfig(executor_type="DaskExecutor")
+    def test_dask_without_scheduler_is_valid(self):
+        # scheduler address is no longer required at construction —
+        # it can come from a FacilityConfig at build_executor() time
+        ec = ExecutorConfig(executor_type="DaskExecutor")
+        assert ec.dask_scheduler is None
 
     def test_dask_with_scheduler_ok(self):
         ec = ExecutorConfig(executor_type="DaskExecutor", dask_scheduler="tcp://host:8786")
@@ -197,3 +199,70 @@ class TestRunConfigExecutorConfig:
         cfg = RunConfig()
         with pytest.raises(Exception):
             cfg.executor_config = ExecutorConfig()
+
+
+# ---------------------------------------------------------------------------
+# FacilityConfig
+# ---------------------------------------------------------------------------
+
+class TestFacilityConfigDefaults:
+    def test_workers_default(self):
+        assert FacilityConfig(name="local").workers == 4
+
+    def test_scheduler_address_default_is_none(self):
+        assert FacilityConfig(name="local").scheduler_address is None
+
+
+class TestFacilityConfigValidation:
+    def test_invalid_name_raises(self):
+        with pytest.raises(ValueError, match="Unknown facility"):
+            FacilityConfig(name="htcondor")
+
+    @pytest.mark.parametrize("name", ["local", "coffea-casa", "lxplus"])
+    def test_valid_names(self, name):
+        assert FacilityConfig(name=name).name == name
+
+
+class TestFacilityConfigGetSchedulerAddress:
+    def test_explicit_address_returned_directly(self):
+        fc = FacilityConfig(name="coffea-casa", scheduler_address="tcp://host:8786")
+        assert fc.get_scheduler_address() == "tcp://host:8786"
+
+    def test_explicit_address_overrides_env_var(self, monkeypatch):
+        monkeypatch.setenv("COFFEA_CASA_SCHEDULER", "tcp://env-host:8786")
+        fc = FacilityConfig(name="coffea-casa", scheduler_address="tcp://explicit:8786")
+        assert fc.get_scheduler_address() == "tcp://explicit:8786"
+
+    def test_coffea_casa_reads_env_var(self, monkeypatch):
+        monkeypatch.setenv("COFFEA_CASA_SCHEDULER", "tcp://casa:8786")
+        assert FacilityConfig(name="coffea-casa").get_scheduler_address() == "tcp://casa:8786"
+
+    def test_lxplus_reads_env_var(self, monkeypatch):
+        monkeypatch.setenv("LXPLUS_DASK_SCHEDULER", "tcp://lxplus:8786")
+        assert FacilityConfig(name="lxplus").get_scheduler_address() == "tcp://lxplus:8786"
+
+    def test_local_returns_none(self):
+        assert FacilityConfig(name="local").get_scheduler_address() is None
+
+    def test_coffea_casa_returns_none_without_env_var(self, monkeypatch):
+        monkeypatch.delenv("COFFEA_CASA_SCHEDULER", raising=False)
+        assert FacilityConfig(name="coffea-casa").get_scheduler_address() is None
+
+    def test_validate_does_not_raise(self):
+        FacilityConfig(name="local").validate()
+        FacilityConfig(name="coffea-casa").validate()
+
+
+class TestRunConfigFacility:
+    def test_facility_default_is_none(self):
+        assert RunConfig().facility is None
+
+    def test_stores_facility(self):
+        fc = FacilityConfig(name="local")
+        cfg = RunConfig(facility=fc)
+        assert cfg.facility is fc
+
+    def test_frozen_facility_field(self):
+        cfg = RunConfig()
+        with pytest.raises(Exception):
+            cfg.facility = FacilityConfig(name="local")

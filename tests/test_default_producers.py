@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 from workflow.producers_utils import _call_builder, _load_object, _split_fileset, build_executor
 from workflow.default_producers import make_fileset, split_fileset
 from workflow.artifacts import Fileset, Chunking, CustomArtifact
-from workflow.config import RunConfig, ExecutorConfig
+from workflow.config import RunConfig, ExecutorConfig, FacilityConfig
 from workflow.deps import Deps
  
  
@@ -365,20 +365,59 @@ class TestCallBuilderExecutorInjection:
 # ---------------------------------------------------------------------------
 
 class TestBuildExecutor:
+    def test_both_none_returns_none(self):
+        assert build_executor(None, None) is None
+
     def test_iterative_returns_iterative_executor(self):
         from coffea.processor import IterativeExecutor
         ec = ExecutorConfig(executor_type="IterativeExecutor")
-        result = build_executor(ec)
-        assert isinstance(result, IterativeExecutor)
+        assert isinstance(build_executor(ec), IterativeExecutor)
 
     def test_futures_returns_futures_executor(self):
         from coffea.processor import FuturesExecutor
         ec = ExecutorConfig(executor_type="FuturesExecutor", workers=2)
-        result = build_executor(ec)
-        assert isinstance(result, FuturesExecutor)
+        assert isinstance(build_executor(ec), FuturesExecutor)
 
     def test_raw_executor_returned_unchanged(self):
-        from unittest.mock import MagicMock
         fake = MagicMock()
         ec = ExecutorConfig(executor=fake)
         assert build_executor(ec) is fake
+
+    def test_no_ec_local_facility_returns_futures_executor(self):
+        from coffea.processor import FuturesExecutor
+        fc = FacilityConfig(name="local")
+        assert isinstance(build_executor(None, fc), FuturesExecutor)
+
+    def test_dask_ec_with_facility_address_uses_facility(self, monkeypatch):
+        import sys
+        from coffea.processor import DaskExecutor
+        monkeypatch.setenv("COFFEA_CASA_SCHEDULER", "tcp://casa:8786")
+        fc = FacilityConfig(name="coffea-casa")
+        ec = ExecutorConfig(executor_type="DaskExecutor")
+        mock_dd = MagicMock()
+        mock_dd.Client = MagicMock(return_value=MagicMock())
+        monkeypatch.setitem(sys.modules, "distributed", MagicMock())
+        monkeypatch.setitem(sys.modules, "dask.distributed", mock_dd)
+        result = build_executor(ec, fc)
+        assert isinstance(result, DaskExecutor)
+
+    def test_dask_ec_without_facility_uses_dask_scheduler_field(self, monkeypatch):
+        import sys
+        from coffea.processor import DaskExecutor
+        mock_dd = MagicMock()
+        mock_dd.Client = MagicMock(return_value=MagicMock())
+        monkeypatch.setitem(sys.modules, "distributed", MagicMock())
+        monkeypatch.setitem(sys.modules, "dask.distributed", mock_dd)
+        ec = ExecutorConfig(executor_type="DaskExecutor", dask_scheduler="tcp://host:8786")
+        assert isinstance(build_executor(ec, None), DaskExecutor)
+
+    def test_dask_ec_without_facility_and_no_scheduler_raises(self):
+        ec = ExecutorConfig(executor_type="DaskExecutor")
+        with pytest.raises(ValueError, match="DaskExecutor requires"):
+            build_executor(ec, None)
+
+    def test_coffea_casa_facility_without_address_raises(self, monkeypatch):
+        monkeypatch.delenv("COFFEA_CASA_SCHEDULER", raising=False)
+        fc = FacilityConfig(name="coffea-casa")
+        with pytest.raises(ValueError, match="COFFEA_CASA_SCHEDULER"):
+            build_executor(None, fc)

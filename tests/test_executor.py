@@ -250,3 +250,75 @@ class TestMaterialize:
             ex.materialize(pl)
  
         assert producer_called, "Producer should be called for always_rerun artifacts"
+
+
+# ---------------------------------------------------------------------------
+# per-step config param on exists() and materialize()
+# ---------------------------------------------------------------------------
+
+class TestExistsWithConfig:
+    @pytest.fixture
+    def analysis(self):
+        fs = Fileset(name="fs", builder="mod:fn")
+        return Analysis(name="an", fileset=fs, builder="mod:run")
+
+    def _setup_complete(self, ex, an, chunk_fraction="None"):
+        p = ex.path_for(an)
+        p.mkdir(parents=True, exist_ok=True)
+        (p / "payload.pkl").write_bytes(b"data")
+        (p / ".chunk_fraction").write_text(chunk_fraction)
+        return p
+
+    def test_explicit_config_used_for_chunk_fraction_check(self, tmp_path, analysis):
+        # executor has chunk_fraction=None; we pass a config with chunk_fraction=0.5
+        # cache was written with 0.5 -> should be a hit
+        ex = _make_executor(tmp_path)
+        self._setup_complete(ex, analysis, chunk_fraction="0.5")
+        per_step = RunConfig(cache_dir=tmp_path, chunk_fraction=0.5)
+        assert ex.exists(analysis, config=per_step) is True
+
+    def test_explicit_config_mismatch_is_a_miss(self, tmp_path, analysis):
+        # cache was written with 0.5 but we query with 0.25 -> miss
+        ex = _make_executor(tmp_path)
+        self._setup_complete(ex, analysis, chunk_fraction="0.5")
+        per_step = RunConfig(cache_dir=tmp_path, chunk_fraction=0.25)
+        assert ex.exists(analysis, config=per_step) is False
+
+    def test_falls_back_to_self_config_when_none(self, tmp_path, analysis):
+        ex = _make_executor(tmp_path)
+        self._setup_complete(ex, analysis)
+        # no explicit config -> uses self.config (chunk_fraction=None, stamp="None") -> hit
+        assert ex.exists(analysis) is True
+
+
+class TestMaterializeWithConfig:
+    def test_explicit_config_passed_to_producer(self, tmp_path):
+        ex = _make_executor(tmp_path)
+        fs = Fileset(name="x", builder="mod:fn")
+        per_step = RunConfig(cache_dir=tmp_path, chunk_fraction=0.5)
+        received = {}
+
+        def fake_producer(*, art, deps, out, config):
+            received["config"] = config
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "fileset.json").write_text("{}")
+
+        with patch("workflow.executor.get_producer", return_value=fake_producer):
+            ex.materialize(fs, config=per_step)
+
+        assert received["config"].chunk_fraction == 0.5
+
+    def test_self_config_used_when_no_explicit_config(self, tmp_path):
+        ex = _make_executor(tmp_path, chunk_fraction=0.3)
+        fs = Fileset(name="x", builder="mod:fn")
+        received = {}
+
+        def fake_producer(*, art, deps, out, config):
+            received["config"] = config
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "fileset.json").write_text("{}")
+
+        with patch("workflow.executor.get_producer", return_value=fake_producer):
+            ex.materialize(fs)
+
+        assert received["config"].chunk_fraction == 0.3
