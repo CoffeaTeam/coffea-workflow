@@ -75,7 +75,10 @@ def run_chunk_analysis_standalone(
     chunk_fileset = json.loads(Path(chunk_path).read_text())
     try:
         print("Before runner")
-        executor = build_executor(config.executor_config) if (config is not None and config.executor_config is not None) else None
+        executor = build_executor(
+            config.executor_config if config is not None else None,
+            config.facility if config is not None else None,
+        )
         result = _call_builder(fn, chunk_fileset, config=config, executor=executor, builder_params=builder_params)
         print("After runner")
         status = "ok" if result.is_ok() else f"failed: {result}"

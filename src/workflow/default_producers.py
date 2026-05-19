@@ -65,7 +65,7 @@ def run_analysis(*, art: ChunkAnalysis, deps: Deps, out: Path, config: RunConfig
     chunk_fileset = json.loads(chunk_path.read_text())
 
     fn = _load_object(art.analysis_builder)  # user's function
-    executor = build_executor(config.executor_config) if config.executor_config is not None else None
+    executor = build_executor(config.executor_config, config.facility)
     result = _call_builder(fn, chunk_fileset, config=config, executor=executor,
                            builder_params=dict(art.builder_params))
 

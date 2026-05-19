@@ -8,25 +8,40 @@
     
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Callable, List, Sequence, Tuple, Type
+from typing import TYPE_CHECKING, Callable, List, Sequence, Tuple, Type
 from .artifacts import _builder_key
+
+if TYPE_CHECKING:
+    from .config import FacilityConfig, ExecutorConfig
 
 @dataclass(frozen=True)
 class Step:
     """
-    Defines how the analysis step should be executed. 
-    It requires:
-        - name: name of the step given by a user;
-        - step_type: preimplemented external Artifact type (Fileset, Analysis, Plotting)
-        - builder: the location of the user's code for producing an Artifact
+    Defines how the analysis step should be executed.
+
+    Per-step overrides (both optional, both default to the workflow-level RunConfig):
+        facility — WHERE to run (coffea-casa, lxplus, local)
+        executor_config — HOW to run (DaskExecutor, FuturesExecutor, IterativeExecutor)
+
+    Analysis parameters (strategy, percentage, datasets, chunk_fraction) and cache_dir
+    are always taken from the workflow-level RunConfig and cannot be overridden per step.
     """
     name: str
     step_type: Type
     builder: str | Callable
     builder_params: dict | None = None
+    facility: "FacilityConfig | None" = None
+    executor_config: "ExecutorConfig | None" = None
 
     def to_dict(self) -> dict:
-        return {"name": self.name, "step_type": self.step_type.__name__, "builder": _builder_key(self.builder), "builder_params": str(self.builder_params.items())}
+        return {
+            "name": self.name,
+            "step_type": self.step_type.__name__,
+            "builder": _builder_key(self.builder),
+            "builder_params": dict(self.builder_params) if self.builder_params else None,
+            "facility": self.facility.name if self.facility else None,
+            "executor_config": self.executor_config.executor_type if self.executor_config else None,
+        }
 
 @dataclass
 class Workflow:

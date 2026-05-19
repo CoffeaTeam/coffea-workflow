@@ -1,8 +1,10 @@
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
 SplitStrategy = Literal["by_dataset"] | None
+
 
 @dataclass(frozen=True)
 class ExecutorConfig:
@@ -26,13 +28,49 @@ class ExecutorConfig:
             return
         if self.executor_type not in ("IterativeExecutor", "FuturesExecutor", "DaskExecutor"):
             raise ValueError(f"Invalid executor_type={self.executor_type!r}. Supported types are IterativeExecutor, FuturesExecutor, DaskExecutor")
-        if self.executor_type == "DaskExecutor" and self.dask_scheduler is None:
-            # TODO: when facilities added if coffea-casa, then automatically map scheduler
-            raise ValueError("dask_scheduler is required when executor_type='DaskExecutor'")
         if self.workers < 1:
             raise ValueError("workers must be >= 1")
         if self.chunks_per_worker < 1:
             raise ValueError("chunks_per_worker must be >= 1")
+
+@dataclass(frozen=True)
+class FacilityConfig:
+    """
+    Describes WHERE to run. Does not create executors — that is build_executor()'s job.
+
+    Predefined instances in workflow.facilities:
+        facilities.local — FuturesExecutor, no cluster
+        facilities.coffea_casa — DaskExecutor, reads COFFEA_CASA_SCHEDULER env-var
+        facilities.lxplus — DaskExecutor, reads LXPLUS_DASK_SCHEDULER env-var
+
+    Override scheduler address explicitly:
+        FacilityConfig(name="coffea-casa", scheduler_address="tcp://my-host:8786")
+    """
+    name: Literal["local", "coffea-casa", "lxplus"]
+    scheduler_address: str | None = None
+    workers: int = 4
+
+    def __post_init__(self):
+        if self.name not in ("local", "coffea-casa", "lxplus"):
+            raise ValueError(
+                f"Unknown facility {self.name!r}. "
+                "Supported: 'local', 'coffea-casa', 'lxplus'"
+            )
+
+    def get_scheduler_address(self) -> str | None:
+        """Resolve scheduler address: explicit field > env-var > None."""
+        if self.scheduler_address is not None:
+            return self.scheduler_address
+        if self.name == "coffea-casa":
+            return os.environ.get("COFFEA_CASA_SCHEDULER")
+        if self.name == "lxplus":
+            return os.environ.get("LXPLUS_DASK_SCHEDULER")
+        return None
+
+    def validate(self) -> None:
+        """Pre-flight checks. See issue: upfront facility validation in render()."""
+        pass
+
 
 @dataclass(frozen=True)
 class RunConfig:
@@ -51,6 +89,7 @@ class RunConfig:
     hist_client: Any | None = None
     histserv_connection_info: dict | None = None
     executor_config: ExecutorConfig | None = None
+    facility: FacilityConfig | None = None
 
     def __post_init__(self):
         if self.strategy not in (None, "by_dataset"):
@@ -68,8 +107,6 @@ class RunConfig:
                     "percentage must divide 100 evenly (e.g. 10, 20, 25, 50)."
                 )
             
-
-        # auto-convert list → tuple for hashability
         if isinstance(self.datasets, list):
             object.__setattr__(self, "datasets", tuple(self.datasets))
 

@@ -1,8 +1,9 @@
+import dataclasses
 import json
 import typing
 import cloudpickle
 from .config import RunConfig
-from .workflow import Workflow
+from .workflow import Workflow, Step
 from .artifacts import ArtifactBase, Fileset, Analysis, Plotting, CustomArtifact
 from pathlib import Path
 from .executor import Executor
@@ -114,6 +115,25 @@ def _print_dag(workflow: Workflow) -> None:
         print("Edges: (none)")
 
 
+def _resolve_step_config(workflow_config: RunConfig, step: Step) -> RunConfig:
+    """
+    Merge per-step facility/executor overrides into the workflow config.
+
+    Only facility and executor_config can be overridden per step.
+    Analysis parameters (strategy, percentage, datasets, chunk_fraction) and
+    cache_dir are always taken from the workflow-level RunConfig.
+    """
+    effective_facility = step.facility if step.facility is not None else workflow_config.facility
+    effective_ec = step.executor_config if step.executor_config is not None else workflow_config.executor_config
+    if effective_facility is workflow_config.facility and effective_ec is workflow_config.executor_config:
+        return workflow_config
+    return dataclasses.replace(
+        workflow_config,
+        facility=effective_facility,
+        executor_config=effective_ec,
+    )
+
+
 def render(workflow: Workflow, config: RunConfig):
     """
     Executes DAG, sorts the steps to begin with the last one
@@ -140,10 +160,11 @@ def render(workflow: Workflow, config: RunConfig):
         upstream = [artifact_by_idx[src] for src, dst in workflow.edges if dst == idx]
         artifact = _build_artifact(step.step_type, step_name, step.builder, step.builder_params, upstream)
 
+        effective_config = _resolve_step_config(config, step)
         print(
             f"Executing step '{step_name}' of type '{step.step_type.__name__}' with the user code {step.builder} and user parameters {step.builder_params}"
         )
-        path = executor.materialize(artifact)
+        path = executor.materialize(artifact, config=effective_config)
         print(f"  -> materialized at {path}")
 
         artifact_by_idx[idx] = artifact

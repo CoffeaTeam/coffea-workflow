@@ -1,8 +1,10 @@
 import inspect
-from .config import RunConfig
 import importlib
 import math
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .config import FacilityConfig, ExecutorConfig
 
 
 def _call_builder(fn, *args, config=None, out=None, builder_params=None, executor=None):
@@ -26,19 +28,63 @@ def _call_builder(fn, *args, config=None, out=None, builder_params=None, executo
     return fn(*args, **kwargs)
 
 
-def build_executor(ec: "ExecutorConfig"):
-    """Return a coffea executor from an ExecutorConfig."""
+def build_executor(ec: "ExecutorConfig | None", facility: "FacilityConfig | None" = None):
+    """
+    Build a coffea executor from an ExecutorConfig and/or FacilityConfig.
+
+    Priority rules:
+    - ec.executor (raw instance)       → use directly, ignore everything else
+    - ec.executor_type == "DaskExecutor" → scheduler address from facility first,
+                                           ec.dask_scheduler as fallback
+    - ec is None, facility given        → infer executor type from facility name
+    - both None                         → return None (analysis fn manages its own executor)
+    """
     from coffea.processor import IterativeExecutor, FuturesExecutor, DaskExecutor
+
+    if ec is None and facility is None:
+        return None
+
+    if ec is None:
+        if facility.name == "local":
+            return FuturesExecutor(workers=facility.workers)
+        addr = _require_scheduler_address(facility)
+        from dask.distributed import Client
+        return DaskExecutor(client=Client(addr))
+
     if ec.executor is not None:
         return ec.executor
+
     if ec.executor_type == "IterativeExecutor":
         return IterativeExecutor()
-    elif ec.executor_type == "FuturesExecutor":
+
+    if ec.executor_type == "FuturesExecutor":
         return FuturesExecutor(workers=ec.workers)
-    elif ec.executor_type == "DaskExecutor":
-        #TODO: if coffea-casa
+
+    if ec.executor_type == "DaskExecutor":
+        if facility is not None:
+            addr = _require_scheduler_address(facility)
+        elif ec.dask_scheduler is not None:
+            addr = ec.dask_scheduler
+        else:
+            raise ValueError(
+                "DaskExecutor requires either a facility with a scheduler address "
+                "or dask_scheduler set in ExecutorConfig"
+            )
         from dask.distributed import Client
-        return DaskExecutor(client=Client(ec.dask_scheduler))
+        return DaskExecutor(client=Client(addr))
+
+
+def _require_scheduler_address(facility: "FacilityConfig") -> str:
+    addr = facility.get_scheduler_address()
+    if not addr:
+        env = (
+            "COFFEA_CASA_SCHEDULER" if facility.name == "coffea-casa"
+            else "LXPLUS_DASK_SCHEDULER"
+        )
+        raise ValueError(
+            f"Facility '{facility.name}': set scheduler_address or the {env} environment variable"
+        )
+    return addr
 
 
 def _load_artifact_output(art, path):
