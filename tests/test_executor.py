@@ -100,7 +100,7 @@ class TestExistsChunkAnalysis:
         ex = _make_executor(tmp_path)
         fs = Fileset(name="x", builder="mod:fn")
         ch = Chunking(fileset=fs, split_strategy=None, percentage=None)
-        ca = ChunkAnalysis(chunk_file="c.json", chunking=ch, analysis_builder="mod:run")
+        ca = ChunkAnalysis(chunk_file="c.json", chunk_hash="abc123", chunking=ch, analysis_builder="mod:run")
         ex.path_for(ca).mkdir(parents=True)
         assert ex.exists(ca) is False
  
@@ -108,7 +108,7 @@ class TestExistsChunkAnalysis:
         ex = _make_executor(tmp_path)
         fs = Fileset(name="x", builder="mod:fn")
         ch = Chunking(fileset=fs, split_strategy=None, percentage=None)
-        ca = ChunkAnalysis(chunk_file="c.json", chunking=ch, analysis_builder="mod:run")
+        ca = ChunkAnalysis(chunk_file="c.json", chunk_hash="abc123", chunking=ch, analysis_builder="mod:run")
         _touch_sentinel(ex, ca, ".success")
         assert ex.exists(ca) is True
  

@@ -295,7 +295,7 @@ class TestSplitFilesetProducerWithCustomUpstream:
 
         manifest = json.loads((out / "manifest.json").read_text())
         assert manifest["n_chunks"] == 1
-        chunk = json.loads((out / manifest["output_files"]["0"]).read_text())
+        chunk = json.loads((out / manifest["output_files"]["0"]["file"]).read_text())
         assert set(chunk.keys()) == {"A", "B"}
 
     def test_by_dataset_strategy_with_custom_artifact(self, tmp_path):

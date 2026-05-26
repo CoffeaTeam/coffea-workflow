@@ -198,42 +198,41 @@ class TestChunkAnalysis:
         return Chunking(fileset=fs, split_strategy=None, percentage=None)
  
     def test_keys_fields(self, chunking):
-        ca = ChunkAnalysis(chunk_file="chunk_0.json", chunking=chunking, analysis_builder="mod:run")
+        ca = ChunkAnalysis(chunk_file="chunk_0.json", chunk_hash="abc123", chunking=chunking, analysis_builder="mod:run")
         k = ca.keys()
-        assert k["chunk_file"] == "chunk_0.json"
-        assert k["chunking"] is chunking
+        assert k["chunk_hash"] == "abc123"
         assert k["analysis_builder"] == "mod:run"
- 
+
     def test_type_name(self, chunking):
-        ca = ChunkAnalysis(chunk_file="c.json", chunking=chunking, analysis_builder="mod:run")
+        ca = ChunkAnalysis(chunk_file="c.json", chunk_hash="abc123", chunking=chunking, analysis_builder="mod:run")
         assert ca.type_name == "ChunkAnalysis"
- 
-    def test_identity_changes_with_chunk_file(self, chunking):
-        ca1 = ChunkAnalysis(chunk_file="chunk_0.json", chunking=chunking, analysis_builder="mod:run")
-        ca2 = ChunkAnalysis(chunk_file="chunk_1.json", chunking=chunking, analysis_builder="mod:run")
+
+    def test_identity_changes_with_chunk_hash(self, chunking):
+        ca1 = ChunkAnalysis(chunk_file="chunk_0.json", chunk_hash="hash_aaa", chunking=chunking, analysis_builder="mod:run")
+        ca2 = ChunkAnalysis(chunk_file="chunk_0.json", chunk_hash="hash_bbb", chunking=chunking, analysis_builder="mod:run")
         assert ca1.identity() != ca2.identity()
- 
+
     def test_identity_changes_with_builder(self, chunking):
-        ca1 = ChunkAnalysis(chunk_file="c.json", chunking=chunking, analysis_builder="mod:run_v1")
-        ca2 = ChunkAnalysis(chunk_file="c.json", chunking=chunking, analysis_builder="mod:run_v2")
+        ca1 = ChunkAnalysis(chunk_file="c.json", chunk_hash="abc123", chunking=chunking, analysis_builder="mod:run_v1")
+        ca2 = ChunkAnalysis(chunk_file="c.json", chunk_hash="abc123", chunking=chunking, analysis_builder="mod:run_v2")
         assert ca1.identity() != ca2.identity()
 
     def test_builder_params_stored_as_sorted_tuple(self, chunking):
-        ca = ChunkAnalysis(chunk_file="c.json", chunking=chunking, analysis_builder="mod:run", builder_params={"z": 9, "a": 1})
+        ca = ChunkAnalysis(chunk_file="c.json", chunk_hash="abc123", chunking=chunking, analysis_builder="mod:run", builder_params={"z": 9, "a": 1})
         assert ca.builder_params == (("a", 1), ("z", 9))
 
     def test_builder_params_keys_returns_dict(self, chunking):
-        ca = ChunkAnalysis(chunk_file="c.json", chunking=chunking, analysis_builder="mod:run", builder_params={"p": "q"})
+        ca = ChunkAnalysis(chunk_file="c.json", chunk_hash="abc123", chunking=chunking, analysis_builder="mod:run", builder_params={"p": "q"})
         assert ca.keys()["builder_params"] == {"p": "q"}
 
     def test_builder_params_empty_by_default(self, chunking):
-        ca = ChunkAnalysis(chunk_file="c.json", chunking=chunking, analysis_builder="mod:run")
+        ca = ChunkAnalysis(chunk_file="c.json", chunk_hash="abc123", chunking=chunking, analysis_builder="mod:run")
         assert ca.builder_params == ()
         assert ca.keys()["builder_params"] == {}
 
     def test_identity_changes_with_builder_params(self, chunking):
-        ca1 = ChunkAnalysis(chunk_file="c.json", chunking=chunking, analysis_builder="mod:run", builder_params={"k": 1})
-        ca2 = ChunkAnalysis(chunk_file="c.json", chunking=chunking, analysis_builder="mod:run", builder_params={"k": 2})
+        ca1 = ChunkAnalysis(chunk_file="c.json", chunk_hash="abc123", chunking=chunking, analysis_builder="mod:run", builder_params={"k": 1})
+        ca2 = ChunkAnalysis(chunk_file="c.json", chunk_hash="abc123", chunking=chunking, analysis_builder="mod:run", builder_params={"k": 2})
         assert ca1.identity() != ca2.identity()
 
 
