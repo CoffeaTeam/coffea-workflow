@@ -3,6 +3,7 @@ This module contains functions that are applied to the DAG by snakemake_render
 """
 
 from .producers_utils import _call_builder, _extract_acc, _load_object, _split_fileset, build_executor
+from coffea.dataset_tools.splitting import hash_fileset
 
 from typing import Any
 from pathlib import Path
@@ -49,7 +50,10 @@ def split_fileset_standalone(
     for i, chunk in enumerate(chunks):
         fname = f"chunk_{i}.json"
         (out_dir / fname).write_text(json.dumps(chunk, indent=2, sort_keys=True))
-        manifest_files[str(i)] = fname
+        manifest_files[str(i)] = {
+            "file": fname,
+            "hash": hash_fileset(chunk),
+        }
     (out_dir / "manifest.json").write_text(
         json.dumps({"output_files": manifest_files, "n_chunks": len(chunks)}, indent=2, sort_keys=True)
     )

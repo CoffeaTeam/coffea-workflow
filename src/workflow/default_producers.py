@@ -8,6 +8,7 @@ from .deps import Deps
 from .producers import producer
 from .config import RunConfig
 from coffea.processor import accumulate
+from coffea.dataset_tools.splitting import hash_fileset
 from .producers_utils import _call_builder, _extract_acc, _load_object, _split_fileset, _load_artifact_output, build_executor
 
 @producer(Fileset)
@@ -44,7 +45,10 @@ def split_fileset(*, art: Chunking, deps: Deps, out: Path, config: RunConfig) ->
     for i, chunk in enumerate(chunks):
         file_name = f"fileset_chunk_{i}.json"
         (out / file_name).write_text(json.dumps(chunk, indent=2, sort_keys=True))
-        manifest_files[str(i)] = file_name
+        manifest_files[str(i)] = {
+            "file": file_name,
+            "hash": hash_fileset(chunk),
+        }
 
     (out / "manifest.json").write_text(json.dumps({
         "output_files": manifest_files,
@@ -90,8 +94,8 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
     manifest_path = chunk_dir / "manifest.json" # manifest contains info about our fileset.json or its chunks .json
 
     manifest = json.loads(manifest_path.read_text())
-    chunks_files = list(manifest["output_files"].values())
-        
+    chunks_entries = list(manifest["output_files"].values())
+
     chunks_files_num = manifest["n_chunks"]
     if chunks_files_num > 1:
         print(f"\nSplit strategy applied, starting independent processing of {chunks_files_num} fileset subsets...\n")
@@ -99,19 +103,22 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
         print(f"\nNo split strategy was specified, proceed with processing the whole fileset...")
 
     if config.chunk_fraction is not None:
-        n = max(1, round(len(chunks_files) * config.chunk_fraction))
-        chunks_files = chunks_files[:n]
+        n = max(1, round(len(chunks_entries) * config.chunk_fraction))
+        chunks_entries = chunks_entries[:n]
         print(f"chunk_fraction={config.chunk_fraction}: processing {n} of {manifest['n_chunks']} chunks")
 
     merged_acc = None
     metrics_merged = None
     failures = []
 
-    for chunk_file in chunks_files:
+    for entry in chunks_entries:
+        chunk_file = entry["file"]
+        chunk_hash = entry["hash"]
         print("------------------------------------")
         print(f"Processing {chunk_file}")
         chunk_art = ChunkAnalysis(
             chunk_file=chunk_file,
+            chunk_hash=chunk_hash,
             chunking=chunking,
             analysis_builder=art.builder,
             builder_params=art.builder_params,
@@ -138,8 +145,8 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
 
     payload = {
         "builder": _builder_key(art.builder),
-        "n_chunks_total": len(chunks_files),
-        "n_chunks_ok": 0 if merged_acc is None else (len(chunks_files) - len(failures)),
+        "n_chunks_total": len(chunks_entries),
+        "n_chunks_ok": 0 if merged_acc is None else (len(chunks_entries) - len(failures)),
         "failures": failures,
         "processor_result": (merged_acc, metrics_merged),
     }

@@ -103,7 +103,7 @@ class Chunking(ArtifactBase):
 @dataclass(frozen=True)
 class ChunkAnalysis(ArtifactBase):
     """
-    Internal artifact. User doesn't use this artifact, it's a helping artifact that is produced 
+    Internal artifact. User doesn't use this artifact, it's a helping artifact that is produced
     by Analysis artifact to process one chunk.
     Its producer's output example:
         - coffea acc (this should be the outcome of user specified builder)
@@ -113,19 +113,17 @@ class ChunkAnalysis(ArtifactBase):
     And will identify the missing one when rerunning analysis again.
     """
     chunk_file: str
+    chunk_hash: str
     chunking: Chunking
     analysis_builder: str | Callable
     builder_params: tuple = ()
-     
+
     def __post_init__(self):
         object.__setattr__(self, 'builder_params', _to_params_tuple(self.builder_params))
 
-
-
     def keys(self):
         return {
-            "chunk_file": self.chunk_file,
-            "chunking": self.chunking,
+            "chunk_hash": self.chunk_hash,
             "analysis_builder": _builder_key(self.analysis_builder),
             "builder_params": dict(self.builder_params),
         }
