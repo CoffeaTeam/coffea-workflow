@@ -1,5 +1,5 @@
 """
-Tests for workflow/executor.py
+Tests for coffea_workflow/executor.py
  
 Executor.path_for() builds the content-addressed cache path.
 Executor.exists() checks whether the expected sentinel file is present and
@@ -12,9 +12,9 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
  
-from workflow.executor import Executor
-from workflow.config import RunConfig
-from workflow.artifacts import Fileset, Chunking, ChunkAnalysis, Analysis, Plotting
+from coffea_workflow.executor import Executor
+from coffea_workflow.config import RunConfig
+from coffea_workflow.artifacts import Fileset, Chunking, ChunkAnalysis, Analysis, Plotting
  
  
 # ---------------------------------------------------------------------------
@@ -167,7 +167,7 @@ class TestMaterialize:
         p.mkdir(parents=True, exist_ok=True)
         ex._session_cache.add(p)
  
-        with patch("workflow.executor.get_producer") as mock_get:
+        with patch("coffea_workflow.executor.get_producer") as mock_get:
             result = ex.materialize(fs)
  
         mock_get.assert_not_called()
@@ -178,7 +178,7 @@ class TestMaterialize:
         fs = Fileset(name="x", builder="mod:fn")
         _touch_sentinel(ex, fs, "fileset.json")
  
-        with patch("workflow.executor.get_producer") as mock_get:
+        with patch("coffea_workflow.executor.get_producer") as mock_get:
             result = ex.materialize(fs)
  
         mock_get.assert_not_called()
@@ -199,7 +199,7 @@ class TestMaterialize:
             out.mkdir(parents=True, exist_ok=True)
             (out / "fileset.json").write_text("{}")
  
-        with patch("workflow.executor.get_producer", return_value=fake_producer):
+        with patch("coffea_workflow.executor.get_producer", return_value=fake_producer):
             result = ex.materialize(fs)
  
         assert result == ex.path_for(fs)
@@ -213,7 +213,7 @@ class TestMaterialize:
             out.mkdir(parents=True, exist_ok=True)
             (out / "fileset.json").write_text("{}")
  
-        with patch("workflow.executor.get_producer", return_value=fake_producer):
+        with patch("coffea_workflow.executor.get_producer", return_value=fake_producer):
             path = ex.materialize(fs)
  
         assert path in ex._session_cache
@@ -225,7 +225,7 @@ class TestMaterialize:
         def bad_producer(*, art, deps, out, config):
             pass  # intentionally creates nothing
  
-        with patch("workflow.executor.get_producer", return_value=bad_producer):
+        with patch("coffea_workflow.executor.get_producer", return_value=bad_producer):
             with pytest.raises(RuntimeError, match="did not create output"):
                 ex.materialize(fs)
  
@@ -246,7 +246,7 @@ class TestMaterialize:
             producer_called.append(True)
             (out / "payload.pkl").write_bytes(b"new")
  
-        with patch("workflow.executor.get_producer", return_value=fake_producer):
+        with patch("coffea_workflow.executor.get_producer", return_value=fake_producer):
             ex.materialize(pl)
  
         assert producer_called, "Producer should be called for always_rerun artifacts"
@@ -303,7 +303,7 @@ class TestMaterializeWithConfig:
             out.mkdir(parents=True, exist_ok=True)
             (out / "fileset.json").write_text("{}")
 
-        with patch("workflow.executor.get_producer", return_value=fake_producer):
+        with patch("coffea_workflow.executor.get_producer", return_value=fake_producer):
             ex.materialize(fs, config=per_step)
 
         assert received["config"].chunk_fraction == 0.5
@@ -318,7 +318,7 @@ class TestMaterializeWithConfig:
             out.mkdir(parents=True, exist_ok=True)
             (out / "fileset.json").write_text("{}")
 
-        with patch("workflow.executor.get_producer", return_value=fake_producer):
+        with patch("coffea_workflow.executor.get_producer", return_value=fake_producer):
             ex.materialize(fs)
 
         assert received["config"].chunk_fraction == 0.3

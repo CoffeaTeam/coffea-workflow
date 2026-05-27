@@ -1,5 +1,5 @@
 """
-Tests for workflow/default_producers.py
+Tests for coffea_workflow/default_producers.py
  
 Pure-logic helpers tested without touching the filesystem or coffea:
   - _call_builder: injects config kwarg only when the function signature accepts it
@@ -13,11 +13,11 @@ import cloudpickle
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from workflow.producers_utils import _call_builder, _load_object, _split_fileset, build_executor
-from workflow.default_producers import make_fileset, split_fileset
-from workflow.artifacts import Fileset, Chunking, CustomArtifact
-from workflow.config import RunConfig, ExecutorConfig, FacilityConfig
-from workflow.deps import Deps
+from coffea_workflow.producers_utils import _call_builder, _load_object, _split_fileset, build_executor
+from coffea_workflow.default_producers import make_fileset, split_fileset
+from coffea_workflow.artifacts import Fileset, Chunking, CustomArtifact
+from coffea_workflow.config import RunConfig, ExecutorConfig, FacilityConfig
+from coffea_workflow.deps import Deps
  
  
 # ---------------------------------------------------------------------------

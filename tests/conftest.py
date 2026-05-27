@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
-from workflow.artifacts import Fileset, Analysis, Chunking, Plotting, ChunkAnalysis
-from workflow.config import RunConfig
+from coffea_workflow.artifacts import Fileset, Analysis, Chunking, Plotting, ChunkAnalysis
+from coffea_workflow.config import RunConfig
  
  
 @pytest.fixture

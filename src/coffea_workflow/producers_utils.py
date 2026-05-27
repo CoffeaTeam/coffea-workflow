@@ -49,8 +49,12 @@ def build_executor(ec: "ExecutorConfig | None", facility: "FacilityConfig | None
         if facility.name == "local":
             return FuturesExecutor(workers=facility.workers)
         addr = _require_scheduler_address(facility)
-        from dask.distributed import Client
-        return DaskExecutor(client=Client(addr))
+        from dask.distributed import Client, PipInstall
+        client=Client(addr)
+        plugin = PipInstall(packages=["coffea@git+https://github.com/hooloobooroodkoo/coffea.git@processor_result_type",
+                                     "coffea-workflow@git+https://github.com/hooloobooroodkoo/coffea-workflow.git@main"])
+        client.register_plugin(plugin)
+        return DaskExecutor(client=client)
 
     if ec.executor is not None:
         return ec.executor
@@ -71,8 +75,12 @@ def build_executor(ec: "ExecutorConfig | None", facility: "FacilityConfig | None
                 "DaskExecutor requires either a facility with a scheduler address "
                 "or dask_scheduler set in ExecutorConfig"
             )
-        from dask.distributed import Client
-        return DaskExecutor(client=Client(addr))
+        from dask.distributed import Client, PipInstall
+        client=Client(addr)
+        plugin = PipInstall(packages=["coffea@git+https://github.com/hooloobooroodkoo/coffea.git@processor_result_type",
+                                     "coffea-workflow@git+https://github.com/hooloobooroodkoo/coffea-workflow.git@main"])
+        client.register_plugin(plugin)
+        return DaskExecutor(client=client)
 
 
 def _require_scheduler_address(facility: "FacilityConfig") -> str:

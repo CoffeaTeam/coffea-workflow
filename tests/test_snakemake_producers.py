@@ -10,14 +10,14 @@ import cloudpickle
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from workflow.snakemake_producers import (
+from coffea_workflow.snakemake_producers import (
     make_fileset_standalone,
     split_fileset_standalone,
     run_chunk_analysis_standalone,
     merge_chunk_results_standalone,
     make_plot_standalone,
 )
-from workflow.config import RunConfig
+from coffea_workflow.config import RunConfig
 
 
 # ---------------------------------------------------------------------------

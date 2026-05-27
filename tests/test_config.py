@@ -1,5 +1,5 @@
 """
-Tests for workflow/config.py
+Tests for coffea_workflow/config.py
  
 RunConfig is a frozen dataclass. __post_init__ validates:
   - strategy must be None or "by_dataset"
@@ -9,7 +9,7 @@ RunConfig is a frozen dataclass. __post_init__ validates:
 """
 import pytest
 from pathlib import Path
-from workflow.config import RunConfig, ExecutorConfig, FacilityConfig
+from coffea_workflow.config import RunConfig, ExecutorConfig, FacilityConfig
  
  
 class TestRunConfigDefaults:

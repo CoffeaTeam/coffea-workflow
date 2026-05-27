@@ -2,10 +2,10 @@
 Tests for render._resolve_step_config.
 """
 import pytest
-from workflow.config import RunConfig, ExecutorConfig, FacilityConfig
-from workflow.workflow import Step
-from workflow.artifacts import Fileset
-from workflow.render import _resolve_step_config
+from coffea_workflow.config import RunConfig, ExecutorConfig, FacilityConfig
+from coffea_workflow.workflow import Step
+from coffea_workflow.artifacts import Fileset
+from coffea_workflow.render import _resolve_step_config
 
 
 @pytest.fixture

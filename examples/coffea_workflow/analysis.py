@@ -65,7 +65,7 @@ class Processor(processor.ProcessorABC):
         pass
 
 def run_analysis(fileset, executor=None):
-    run = processor.Runner(executor=executor, schema=schemas.NanoAODSchema, savemetrics=False,
+    run = processor.Runner(executor=executor, schema=schemas.NanoAODSchema, savemetrics=False, skipbadfiles=True,
                         use_result_type=True)
     result = run(fileset, Processor())
     return result

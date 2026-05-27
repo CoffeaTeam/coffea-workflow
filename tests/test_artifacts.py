@@ -1,5 +1,5 @@
 """
-Tests for workflow/artifacts.py
+Tests for coffea_workflow/artifacts.py
  
 Covers:
   - _builder_key() stable serialisation of callable vs string builders
@@ -8,7 +8,7 @@ Covers:
   - ARTIFACT_REGISTRY contains all registered types
 """
 import pytest
-from workflow.artifacts import (
+from coffea_workflow.artifacts import (
     _builder_key,
     _to_params_tuple,
     Fileset,
