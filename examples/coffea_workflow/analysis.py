@@ -71,6 +71,7 @@ def run_analysis(fileset, executor=None):
     return result
 
 def plot_results(result):
-    print(f"Result:\n{result}")
+    print(f"Result keys: {list(result.keys())}")
+    print(f"n_chunks_ok: {result['n_chunks_ok']} / {result['n_chunks_total']}")
     hist_acc, metrics = result["processor_result"]
     hist_acc['MET'].plot1d()
