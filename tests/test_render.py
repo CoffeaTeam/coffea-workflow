@@ -2,7 +2,8 @@
 Tests for render._resolve_step_config.
 """
 import pytest
-from coffea_workflow.config import RunConfig, ExecutorConfig, FacilityConfig
+from coffea_workflow.config import RunConfig, ExecutorConfig
+from coffea_workflow.facilities import LocalFactory, CoffeaCasaFactory
 from coffea_workflow.workflow import Step
 from coffea_workflow.artifacts import Fileset
 from coffea_workflow.render import _resolve_step_config
@@ -15,7 +16,7 @@ def workflow_config():
         percentage=50,
         cache_dir=".cache",
         executor_config=ExecutorConfig(executor_type="FuturesExecutor", workers=2),
-        facility=FacilityConfig(name="local"),
+        facility=LocalFactory(),
     )
 
 
@@ -32,15 +33,15 @@ class TestResolveStepConfig:
     def test_step_facility_overrides_workflow_facility(self, workflow_config):
         step = Step(
             name="S", step_type=Fileset, builder="m:fn",
-            facility=FacilityConfig(name="coffea-casa", scheduler_address="tcp://x:8786"),
+            facility=CoffeaCasaFactory(scheduler_address="tcp://x:8786"),
         )
         result = _resolve_step_config(workflow_config, step)
-        assert result.facility.name == "coffea-casa"
+        assert isinstance(result.facility, CoffeaCasaFactory)
 
     def test_step_facility_does_not_affect_analysis_params(self, workflow_config):
         step = Step(
             name="S", step_type=Fileset, builder="m:fn",
-            facility=FacilityConfig(name="coffea-casa", scheduler_address="tcp://x:8786"),
+            facility=CoffeaCasaFactory(scheduler_address="tcp://x:8786"),
         )
         result = _resolve_step_config(workflow_config, step)
         assert result.strategy == workflow_config.strategy
@@ -61,11 +62,11 @@ class TestResolveStepConfig:
         assert result.cache_dir == workflow_config.cache_dir
 
     def test_both_overrides_applied_independently(self, workflow_config):
-        fc = FacilityConfig(name="coffea-casa", scheduler_address="tcp://x:8786")
+        fc = CoffeaCasaFactory(scheduler_address="tcp://x:8786")
         ec = ExecutorConfig(executor_type="DaskExecutor")
         step = Step(name="S", step_type=Fileset, builder="m:fn", facility=fc, executor_config=ec)
         result = _resolve_step_config(workflow_config, step)
-        assert result.facility.name == "coffea-casa"
+        assert isinstance(result.facility, CoffeaCasaFactory)
         assert result.executor_config.executor_type == "DaskExecutor"
         assert result.strategy == workflow_config.strategy
 

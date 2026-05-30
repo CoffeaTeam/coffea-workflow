@@ -9,7 +9,8 @@ RunConfig is a frozen dataclass. __post_init__ validates:
 """
 import pytest
 from pathlib import Path
-from coffea_workflow.config import RunConfig, ExecutorConfig, FacilityConfig
+from coffea_workflow.config import RunConfig, ExecutorConfig, FacilityBase
+from coffea_workflow.facilities import LocalFactory, CoffeaCasaFactory
  
  
 class TestRunConfigDefaults:
@@ -202,67 +203,83 @@ class TestRunConfigExecutorConfig:
 
 
 # ---------------------------------------------------------------------------
-# FacilityConfig
+# LocalFactory
 # ---------------------------------------------------------------------------
 
-class TestFacilityConfigDefaults:
-    def test_workers_default(self):
-        assert FacilityConfig(name="local").workers == 4
+class TestLocalFactory:
+    def test_default_workers(self):
+        assert LocalFactory().workers == 4
 
-    def test_scheduler_address_default_is_none(self):
-        assert FacilityConfig(name="local").scheduler_address is None
+    def test_default_scheduler_address_is_none(self):
+        assert LocalFactory().scheduler_address is None
+
+    def test_custom_workers(self):
+        assert LocalFactory(workers=8).workers == 8
+
+    def test_is_facility_base(self):
+        assert isinstance(LocalFactory(), FacilityBase)
+
+    def test_dask_without_address_raises(self):
+        ec = ExecutorConfig(executor_type="DaskExecutor", dask_scheduler=None)
+        with pytest.raises(ValueError, match="scheduler address"):
+            LocalFactory().build(ec)
+
+    def test_dask_with_scheduler_on_ec(self, monkeypatch):
+        pytest.importorskip("distributed")
+        monkeypatch.setattr("dask.distributed.Client", lambda addr: object())
+        ec = ExecutorConfig(executor_type="DaskExecutor", dask_scheduler="tcp://host:8786")
+        LocalFactory().build(ec)  # should not raise
 
 
-class TestFacilityConfigValidation:
-    def test_invalid_name_raises(self):
-        with pytest.raises(ValueError, match="Unknown facility"):
-            FacilityConfig(name="htcondor")
+# ---------------------------------------------------------------------------
+# CoffeaCasaFactory
+# ---------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("name", ["local", "coffea-casa", "lxplus"])
-    def test_valid_names(self, name):
-        assert FacilityConfig(name=name).name == name
+class TestCoffeaCasaFactory:
+    def test_default_scheduler_address(self):
+        assert CoffeaCasaFactory().scheduler_address == "tls://localhost:8786"
+
+    def test_custom_scheduler_address(self):
+        f = CoffeaCasaFactory(scheduler_address="tls://myhost:8786")
+        assert f.scheduler_address == "tls://myhost:8786"
+
+    def test_worker_packages_coerced_to_tuple(self):
+        f = CoffeaCasaFactory(worker_packages=["pkg1", "pkg2"])
+        assert f.worker_packages == ("pkg1", "pkg2")
+
+    def test_worker_files_coerced_to_tuple(self):
+        f = CoffeaCasaFactory(worker_files=["a.py"])
+        assert f.worker_files == ("a.py",)
+
+    def test_is_facility_base(self):
+        assert isinstance(CoffeaCasaFactory(), FacilityBase)
+
+    def test_raw_executor_returned_directly(self):
+        from unittest.mock import MagicMock
+        fake = MagicMock()
+        ec = ExecutorConfig(executor_type="spark", workers=-1, executor=fake)
+        assert CoffeaCasaFactory().build(ec) is fake
 
 
-class TestFacilityConfigGetSchedulerAddress:
-    def test_explicit_address_returned_directly(self):
-        fc = FacilityConfig(name="coffea-casa", scheduler_address="tcp://host:8786")
-        assert fc.get_scheduler_address() == "tcp://host:8786"
-
-    def test_explicit_address_overrides_env_var(self, monkeypatch):
-        monkeypatch.setenv("COFFEA_CASA_SCHEDULER", "tcp://env-host:8786")
-        fc = FacilityConfig(name="coffea-casa", scheduler_address="tcp://explicit:8786")
-        assert fc.get_scheduler_address() == "tcp://explicit:8786"
-
-    def test_coffea_casa_reads_env_var(self, monkeypatch):
-        monkeypatch.setenv("COFFEA_CASA_SCHEDULER", "tcp://casa:8786")
-        assert FacilityConfig(name="coffea-casa").get_scheduler_address() == "tcp://casa:8786"
-
-    def test_lxplus_reads_env_var(self, monkeypatch):
-        monkeypatch.setenv("LXPLUS_DASK_SCHEDULER", "tcp://lxplus:8786")
-        assert FacilityConfig(name="lxplus").get_scheduler_address() == "tcp://lxplus:8786"
-
-    def test_local_returns_none(self):
-        assert FacilityConfig(name="local").get_scheduler_address() is None
-
-    def test_coffea_casa_returns_none_without_env_var(self, monkeypatch):
-        monkeypatch.delenv("COFFEA_CASA_SCHEDULER", raising=False)
-        assert FacilityConfig(name="coffea-casa").get_scheduler_address() is None
-
-    def test_validate_does_not_raise(self):
-        FacilityConfig(name="local").validate()
-        FacilityConfig(name="coffea-casa").validate()
-
+# ---------------------------------------------------------------------------
+# RunConfig.facility
+# ---------------------------------------------------------------------------
 
 class TestRunConfigFacility:
     def test_facility_default_is_none(self):
         assert RunConfig().facility is None
 
-    def test_stores_facility(self):
-        fc = FacilityConfig(name="local")
-        cfg = RunConfig(facility=fc)
-        assert cfg.facility is fc
+    def test_stores_local_factory(self):
+        f = LocalFactory()
+        cfg = RunConfig(facility=f)
+        assert cfg.facility is f
+
+    def test_stores_coffea_casa_factory(self):
+        f = CoffeaCasaFactory()
+        cfg = RunConfig(facility=f)
+        assert cfg.facility is f
 
     def test_frozen_facility_field(self):
         cfg = RunConfig()
         with pytest.raises(Exception):
-            cfg.facility = FacilityConfig(name="local")
+            cfg.facility = LocalFactory()
