@@ -30,16 +30,16 @@ def _topo_order(num_steps, edges):
         raise ValueError("Workflow has a cycle or disconnected dependency graph")
     return order
 
-            
+
 def _build_artifact(step_type, name, builder, builder_params, upstream):
     """
-    As I wanted user to only have to define name and builder(from the Step values), 
+    As I wanted user to only have to define name and builder(from the Step values),
     but artifacts can require some specific parameter which are results of execution
     of the previous dependencies. These parameters will be filled by finding the
     matching artifact in upstream by type.
-    
+
     Example of work:
-    
+
     _build_artifact(Analysis, "SingleMuonAnalysis", "analysis:run_analysis", upstream=[<Fileset artifact from step 1>])
 
     get_type_hints(Analysis) returns:
@@ -56,7 +56,7 @@ def _build_artifact(step_type, name, builder, builder_params, upstream):
             continue
         if field_name == "upstreams":          # injecting all upstream artifacts if it's a custom artifact
             kwargs["upstreams"] = tuple(upstream)
-            continue 
+            continue
         if isinstance(field_type, type) and issubclass(field_type, ArtifactBase):
             match = next((a for a in upstream if isinstance(a, field_type)), None)
             if match is None:
@@ -104,9 +104,7 @@ def _print_dag(workflow: Workflow) -> None:
         print("  (no steps)")
         return
     for idx, step in enumerate(workflow.steps):
-        print(
-            f"  [{idx}] {step.name} -> {step.step_type.__name__} builder={step.builder}"
-        )
+        print(f"  [{idx}] {step.name} -> {step.step_type.__name__} builder={step.builder}")
     if workflow.edges:
         print("Edges:")
         for src, dst in workflow.edges:

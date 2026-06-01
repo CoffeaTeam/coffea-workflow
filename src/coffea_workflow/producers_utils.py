@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 from coffea.dataset_tools.splitting import split_fileset as _split_fileset
 
 if TYPE_CHECKING:
-    from .config import FacilityConfig, ExecutorConfig
+    from .config import FacilityBase, ExecutorConfig
 
 
 def _call_builder(fn, *args, config=None, out=None, builder_params=None, executor=None):
@@ -28,72 +28,12 @@ def _call_builder(fn, *args, config=None, out=None, builder_params=None, executo
         print(f"\nkwargs: {kwargs}")
     return fn(*args, **kwargs)
 
-
-def build_executor(ec: "ExecutorConfig | None", facility: "FacilityConfig | None" = None):
+def build_executor(ec: "ExecutorConfig | None", facility: "FacilityBase | None" = None):
     """
-    Build a coffea executor from an ExecutorConfig and/or FacilityConfig.
-
-    Priority rules:
-    - ec.executor (raw instance)       → use directly, ignore everything else
-    - ec.executor_type == "DaskExecutor" → scheduler address from facility first,
-                                           ec.dask_scheduler as fallback
-    - ec is None, facility given        → infer executor type from facility name
-    - both None                         → return None (analysis fn manages its own executor)
+    Build a coffea executor, delegating entirely to the facility.
     """
-    from coffea.processor import IterativeExecutor, FuturesExecutor, DaskExecutor
-
-    if ec is None and facility is None:
-        return None
-
-    if ec is None:
-        if facility.name == "local":
-            return FuturesExecutor(workers=facility.workers)
-        addr = _require_scheduler_address(facility)
-        from dask.distributed import Client, PipInstall
-        client=Client(addr)
-        plugin = PipInstall(packages=["coffea@git+https://github.com/hooloobooroodkoo/coffea.git@processor_result_type",
-                                     "coffea-workflow@git+https://github.com/hooloobooroodkoo/coffea-workflow.git@main"])
-        client.register_plugin(plugin)
-        return DaskExecutor(client=client)
-
-    if ec.executor is not None:
-        return ec.executor
-
-    if ec.executor_type == "IterativeExecutor":
-        return IterativeExecutor()
-
-    if ec.executor_type == "FuturesExecutor":
-        return FuturesExecutor(workers=ec.workers)
-
-    if ec.executor_type == "DaskExecutor":
-        if facility is not None:
-            addr = _require_scheduler_address(facility)
-        elif ec.dask_scheduler is not None:
-            addr = ec.dask_scheduler
-        else:
-            raise ValueError(
-                "DaskExecutor requires either a facility with a scheduler address "
-                "or dask_scheduler set in ExecutorConfig"
-            )
-        from dask.distributed import Client, PipInstall
-        client=Client(addr)
-        plugin = PipInstall(packages=["coffea@git+https://github.com/hooloobooroodkoo/coffea.git@processor_result_type",
-                                     "coffea-workflow@git+https://github.com/hooloobooroodkoo/coffea-workflow.git@main"])
-        client.register_plugin(plugin)
-        return DaskExecutor(client=client)
-
-
-def _require_scheduler_address(facility: "FacilityConfig") -> str:
-    addr = facility.get_scheduler_address()
-    if not addr:
-        env = (
-            "COFFEA_CASA_SCHEDULER" if facility.name == "coffea-casa"
-            else "LXPLUS_DASK_SCHEDULER"
-        )
-        raise ValueError(
-            f"Facility '{facility.name}': set scheduler_address or the {env} environment variable"
-        )
-    return addr
+    from .facilities import LocalFactory
+    return (facility or LocalFactory()).build(ec)
 
 
 def _load_artifact_output(art, path):

@@ -16,6 +16,7 @@ class Executor:
         self.cache_dir = cache_dir
         self.config = config
         self._session_cache: set[Path] = set()  # paths materialized this run
+        self._coffea_executor: Any = None  # pass same coffea executor to different chunks if split strategy is applied instead of creating multiple
     
 
     def path_for(self, art: Artifact) -> Path:
@@ -44,6 +45,15 @@ class Executor:
             .cache/Analysis/<analysis_identity>/payload.pkl
         """
         return self.cache_dir / art.type_name / art.identity() 
+
+    def get_coffea_executor(self, config: RunConfig) -> Any:
+        """
+        Build the coffea executor on first call and reuse it for all chunks.
+        """
+        if self._coffea_executor is None:
+            from .producers_utils import build_executor
+            self._coffea_executor = build_executor(config.executor_config, config.facility)
+        return self._coffea_executor
 
     _EXPECTED = {
         "Fileset": "fileset.json",

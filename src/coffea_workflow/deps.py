@@ -15,3 +15,10 @@ class Deps:
     def need(self, art: Artifact) -> Path:
         # triggers dependency marelization
         return self._executor.materialize(art, config=self._config)
+
+    def coffea_executor(self):
+        """
+        Return coffea executor, building it once and reusing it.
+        """
+        return self._executor.get_coffea_executor(self._config)
+

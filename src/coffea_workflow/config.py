@@ -1,9 +1,30 @@
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
+from abc import ABC, abstractmethod
 
 SplitStrategy = Literal["by_dataset"] | None
+
+
+class FacilityBase(ABC):
+    """
+    Base class for all facility factories.
+
+    A facility owns three responsibilities:
+      - preflight(): check prerequisites (proxy, packages, hostname) before anything runs
+      - build(executor): create and return the right coffea executor for this facility
+      - close(): tear down any resources created by build() (e.g. a Dask cluster)
+    """
+
+    @abstractmethod
+    def build(self, ec: "ExecutorConfig | None") -> Any:
+        """Build and return a coffea executor."""
+
+    def preflight(self) -> None:
+        """Check all prerequisites. Raise RuntimeError with an exact fix command if anything is missing."""
+
+    def close(self) -> None:
+        """Release resources created by build() (e.g. shut down a Dask cluster)."""
 
 
 @dataclass(frozen=True)
@@ -22,54 +43,25 @@ class ExecutorConfig:
     chunks_per_worker: int = 1
     dask_scheduler: str | None = None
     executor: Any | None = None
+    worker_files: tuple[str, ...] = ()
+    worker_packages: tuple[str, ...] = ()
 
     def __post_init__(self):
+        # workers files - are files that the user would need to install to dask client
+        if isinstance(self.worker_files, (list, tuple)):
+            object.__setattr__(self, "worker_files", tuple(self.worker_files))
+        if isinstance(self.worker_packages, (list, tuple)):
+            object.__setattr__(self, "worker_packages", tuple(self.worker_packages))
         if self.executor is not None:
             return
         if self.executor_type not in ("IterativeExecutor", "FuturesExecutor", "DaskExecutor"):
             raise ValueError(f"Invalid executor_type={self.executor_type!r}. Supported types are IterativeExecutor, FuturesExecutor, DaskExecutor")
+        # dask_scheduler is no longer required here; a FacilityConfig on the Step or RunConfig
+        # can supply the scheduler address at build_executor() time.
         if self.workers < 1:
             raise ValueError("workers must be >= 1")
         if self.chunks_per_worker < 1:
             raise ValueError("chunks_per_worker must be >= 1")
-
-@dataclass(frozen=True)
-class FacilityConfig:
-    """
-    Describes WHERE to run. Does not create executors — that is build_executor()'s job.
-
-    Predefined instances in workflow.facilities:
-        facilities.local — FuturesExecutor, no cluster
-        facilities.coffea_casa — DaskExecutor, reads COFFEA_CASA_SCHEDULER env-var
-        facilities.lxplus — DaskExecutor, reads LXPLUS_DASK_SCHEDULER env-var
-
-    Override scheduler address explicitly:
-        FacilityConfig(name="coffea-casa", scheduler_address="tcp://my-host:8786")
-    """
-    name: Literal["local", "coffea-casa", "lxplus"]
-    scheduler_address: str | None = None
-    workers: int = 4
-
-    def __post_init__(self):
-        if self.name not in ("local", "coffea-casa", "lxplus"):
-            raise ValueError(
-                f"Unknown facility {self.name!r}. "
-                "Supported: 'local', 'coffea-casa', 'lxplus'"
-            )
-
-    def get_scheduler_address(self) -> str | None:
-        """Resolve scheduler address: explicit field > env-var > None."""
-        if self.scheduler_address is not None:
-            return self.scheduler_address
-        if self.name == "coffea-casa":
-            return os.environ.get("COFFEA_CASA_SCHEDULER")
-        if self.name == "lxplus":
-            return os.environ.get("LXPLUS_DASK_SCHEDULER")
-        return None
-
-    def validate(self) -> None:
-        """Pre-flight checks. See issue: upfront facility validation in render()."""
-        pass
 
 
 @dataclass(frozen=True)
@@ -89,7 +81,7 @@ class RunConfig:
     hist_client: Any | None = None
     histserv_connection_info: dict | None = None
     executor_config: ExecutorConfig | None = None
-    facility: FacilityConfig | None = None
+    facility: FacilityBase | None = None
 
     def __post_init__(self):
         if self.strategy not in (None, "by_dataset"):

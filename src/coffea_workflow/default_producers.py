@@ -9,7 +9,7 @@ from .producers import producer
 from .config import RunConfig
 from coffea.processor import accumulate
 from coffea.dataset_tools.splitting import hash_fileset
-from .producers_utils import _call_builder, _extract_acc, _load_object, _split_fileset, _load_artifact_output, build_executor
+from .producers_utils import _call_builder, _extract_acc, _load_object, _split_fileset, _load_artifact_output
 
 @producer(Fileset)
 def make_fileset(*, art: Fileset, deps: Deps, out: Path, config: RunConfig) -> None:
@@ -69,7 +69,7 @@ def run_analysis(*, art: ChunkAnalysis, deps: Deps, out: Path, config: RunConfig
     chunk_fileset = json.loads(chunk_path.read_text())
 
     fn = _load_object(art.analysis_builder)  # user's function
-    executor = build_executor(config.executor_config, config.facility)
+    executor = deps.coffea_executor()
     result = _call_builder(fn, chunk_fileset, config=config, executor=executor,
                            builder_params=dict(art.builder_params))
 
@@ -95,6 +95,8 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
 
     manifest = json.loads(manifest_path.read_text())
     chunks_entries = list(manifest["output_files"].values())
+
+    deps.coffea_executor()
 
     chunks_files_num = manifest["n_chunks"]
     if chunks_files_num > 1:
