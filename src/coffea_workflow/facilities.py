@@ -124,7 +124,7 @@ def generate_apptainer_def(
     print()
     print("To run directly:")
     print("  voms-proxy-init --voms cms --valid 192:00")
-    print(f"  apptainer exec ~/{sif} python your_script.py")
+    print(f"  apptainer exec ~/{sif} python ~/path/to/your_script.py")
     print()
     print("Or with coffea-workflow LxplusFactory:")
     print(f"  LxplusFactory(worker_image='~/{sif}', ...)")
@@ -265,10 +265,13 @@ class LxplusFactory(FacilityBase):
     log_directory: str = "logs"
     worker_packages: tuple[str, ...] = ()
     worker_files: tuple[str, ...] = ()
+    extra_pythonpath: tuple[str, ...] = () #this one added for developing stage to modify coffea-workflow in lxplus and use that package
+
 
     def __post_init__(self):
         self.worker_packages = tuple(self.worker_packages)
         self.worker_files = tuple(self.worker_files)
+        self.extra_pythonpath = tuple(self.extra_pythonpath)
         self._cluster = None
 
     def preflight(self) -> None:
@@ -317,7 +320,14 @@ class LxplusFactory(FacilityBase):
             )
 
     def build(self, ec: ExecutorConfig | None) -> Any:
+        import sys
         from coffea.processor import IterativeExecutor, FuturesExecutor, DaskExecutor
+
+        if self.extra_pythonpath:
+            for p in reversed(self.extra_pythonpath):
+                expanded = os.path.expanduser(p)
+                if expanded not in sys.path:
+                    sys.path.insert(0, expanded)
 
         if ec is not None and ec.executor is not None:
             return ec.executor
@@ -330,10 +340,57 @@ class LxplusFactory(FacilityBase):
         if executor_type == "FuturesExecutor":
             return FuturesExecutor(workers=ec.workers if ec else self.workers)
 
-        # if executor_type == "DaskExecutor":
-        #     return self._build_dask(ec)
+        if executor_type == "DaskExecutor":
+            return self._build_dask(ec)
 
         raise ValueError(f"Unsupported executor_type: {executor_type!r}")
+
+    def _build_dask(self, ec: ExecutorConfig | None) -> Any:
+        from dask_jobqueue import HTCondorCluster
+        from dask.distributed import Client
+        from coffea.processor import DaskExecutor
+
+        worker_image = os.path.expanduser(self.worker_image)
+        env_extra = []
+        if self.extra_pythonpath:
+            expanded = ":".join(os.path.expanduser(p) for p in self.extra_pythonpath)
+            env_extra.append(f"PYTHONPATH={expanded}")
+            
+        cluster = HTCondorCluster(
+            cores=self.cores,
+            memory=self.memory,
+            disk=self.disk,
+            log_directory=self.log_directory,
+            job_extra_directives={
+                "+SingularityImage": f'"{worker_image}"',
+                "+JobFlavour": f'"{self.queue}"',
+            },
+        )
+        n_workers = (ec.workers if ec else None) or self.workers
+        cluster.scale(n_workers)
+        print(f"Submitted {n_workers} HTCondor jobs (queue={self.queue!r}, image={self.worker_image!r}).")
+        print(f"Dashboard: {cluster.dashboard_link}")
+
+        client = Client(cluster)
+        self._cluster = cluster
+
+        packages = list((ec.worker_packages if ec else ()) or self.worker_packages)
+        if packages:
+            from dask.distributed import PipInstall
+            client.register_plugin(PipInstall(packages=packages))
+            print(f"Installing on workers: {packages}")
+
+        files = (ec.worker_files if ec else ()) or self.worker_files
+        for f in files:
+            client.upload_file(f)
+            print(f"Uploaded {f} to workers")
+
+        return DaskExecutor(client=client)
+
+    def close(self) -> None:
+        if self._cluster is not None:
+            self._cluster.close()
+            self._cluster = None
 
         
 # ---------------------------------------------------------------------------
