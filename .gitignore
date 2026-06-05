@@ -26,3 +26,7 @@ cms-open-data-ttbar
 cache
 cache_hist
 .snakemake
+.cache_by_dataset/
+.cache_by_dataset_50pct/
+.cache_mixed_50pct/
+.cache_no_split/
