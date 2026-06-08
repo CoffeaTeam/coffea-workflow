@@ -225,16 +225,18 @@ class CoffeaCasaFactory(FacilityBase):
         from dask.distributed import Client, PipInstall
 
         client = Client(self.scheduler_address)
+        
+        # Upload files before installing packages
+        files = (ec.worker_files if ec else ()) or self.worker_files
+        for f in files:
+            client.upload_file(f)
+            print(f"Uploaded {f} to workers")
 
         packages = list((ec.worker_packages if ec else ()) or self.worker_packages)
         if packages:
             client.register_plugin(PipInstall(packages=packages))
             print(f"Installing on workers: {packages}")
 
-        files = (ec.worker_files if ec else ()) or self.worker_files
-        for f in files:
-            client.upload_file(f)
-            print(f"Uploaded {f} to workers")
 
         return DaskExecutor(client=client)
 

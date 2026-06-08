@@ -71,6 +71,5 @@ def run_analysis(fileset, executor=None):
     return result
 
 def plot_results(result):
-    print(f"Result:\n{result}")
     hist_acc, metrics = result["processor_result"]
     hist_acc['MET'].plot1d()

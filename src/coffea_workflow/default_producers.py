@@ -55,6 +55,7 @@ def split_fileset(*, art: Chunking, deps: Deps, out: Path, config: RunConfig) ->
         "n_chunks": len(chunks),
     }, indent=2, sort_keys=True))
 
+    
 @producer(ChunkAnalysis)
 def run_analysis(*, art: ChunkAnalysis, deps: Deps, out: Path, config: RunConfig) -> None:
     """
@@ -113,37 +114,127 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
     metrics_merged = None
     failures = []
 
-    for entry in chunks_entries:
-        chunk_file = entry["file"]
-        chunk_hash = entry["hash"]
-        print("------------------------------------")
-        print(f"Processing {chunk_file}")
-        chunk_art = ChunkAnalysis(
-            chunk_file=chunk_file,
-            chunk_hash=chunk_hash,
-            chunking=chunking,
-            analysis_builder=art.builder,
-            builder_params=art.builder_params,
+    coffea_exec = deps.coffea_executor()
+    wants_parallel = config.executor_config is not None and config.executor_config.parallel_chunks
+    if wants_parallel and not hasattr(coffea_exec, "client"):
+        raise ValueError(
+            "parallel_chunks=True requires a DaskExecutor. "
+            "Set executor_type='DaskExecutor' in ExecutorConfig."
         )
-        # process chunk
-        chunk_out_dir = deps.need(chunk_art)
-        result = cloudpickle.loads((chunk_out_dir / "payload.pkl").read_bytes())
+    if wants_parallel and config.hist_client is not None:
+        raise ValueError(
+            "parallel_chunks=True is not compatible with hist_client: "
+            "the histserv gRPC connection cannot be serialized to Dask workers. "
+            "Use the default sequential mode when streaming to a hist server."
+        )
+    use_parallel = wants_parallel
 
-        #TODO: if config contains histserv_connection_info, then use the connection and add to the hist server, otherwise 
-        if result.is_ok():
-            print("Successfully processed!")
-            acc, metrics = _extract_acc(result)
-            if config.hist_client is not None:
-                # acc is already connection_info (returned directly from run_analysis)
-                # passing remote_hist directly is not possible because it holds a live gRPC connection, which is not picklable
-                merged_acc = config.histserv_connection_info # connection info to histserv
+    if use_parallel:
+        # Defined as a nested function so cloudpickle serializes it as bytecode,
+        # not as a module reference — the scheduler/workers don't have coffea_workflow installed.
+        def _run_chunk_remote(chunk_fileset, builder_bytes, builder_params):
+            """
+            Runs on a Dask worker. No coffea_workflow imports — only coffea is required.
+            It's a serializable wrapper that replicates what run_analysis + _call_builder do locally, 
+            but without importing coffea_workflow (which may not be installed on workers).
+            """
+            import cloudpickle, inspect
+            from coffea.processor import IterativeExecutor
+            fn = cloudpickle.loads(builder_bytes)
+            sig = inspect.signature(fn).parameters
+            kwargs = {}
+            if "executor" in sig:
+                kwargs["executor"] = IterativeExecutor()
+            if builder_params:
+                for k, v in builder_params.items():
+                    if k in sig:
+                        kwargs[k] = v
+            return cloudpickle.dumps(fn(chunk_fileset, **kwargs))
+
+        client = coffea_exec.client
+        fn = _load_object(art.builder)
+        builder_bytes = cloudpickle.dumps(fn)
+        builder_params = dict(art.builder_params)
+
+        # Build chunk artifacts, separate cached from uncached
+        chunk_arts = []
+        for entry in chunks_entries:
+            chunk_arts.append(ChunkAnalysis(
+                chunk_file=entry["file"],
+                chunk_hash=entry["hash"],
+                chunking=chunking,
+                analysis_builder=art.builder,
+                builder_params=art.builder_params,
+            ))
+
+        uncached_indices = [
+            i for i, ca in enumerate(chunk_arts)
+            if not deps._executor.exists(ca, config=config)
+        ]
+
+        if uncached_indices:
+            print(f"Submitting {len(uncached_indices)} chunks in parallel...")
+            futures = {}
+            for i in uncached_indices:
+                ca = chunk_arts[i]
+                chunk_fileset = json.loads((chunk_dir / ca.chunk_file).read_text())
+                futures[i] = client.submit(_run_chunk_remote, chunk_fileset, builder_bytes, builder_params)
+
+            gathered = client.gather(list(futures.values()))
+            for idx, result_bytes in zip(futures.keys(), gathered):
+                ca = chunk_arts[idx]
+                out_dir = deps._executor.path_for(ca)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                (out_dir / "payload.pkl").write_bytes(result_bytes)
+                (out_dir / ".success").touch()
+                deps._executor._session_cache.add(out_dir)
+
+        for i, (entry, ca) in enumerate(zip(chunks_entries, chunk_arts)):
+            chunk_file = entry["file"]
+            chunk_out_dir = deps._executor.path_for(ca)
+            print("------------------------------------")
+            print(f"Processing {chunk_file}")
+            result = cloudpickle.loads((chunk_out_dir / "payload.pkl").read_bytes())
+            if result.is_ok():
+                print("Successfully processed!")
+                acc, metrics = _extract_acc(result)
+                merged_acc = accumulate([acc], accum=merged_acc)
+                metrics_merged = accumulate([metrics], accum=metrics_merged)
             else:
-                merged_acc = accumulate([acc], accum=merged_acc) # accumulatable
-            metrics_merged = accumulate([metrics], accum=metrics_merged)
-        else:
-            print("Failure caught!")
-            failures.append({"chunk_file": chunk_file, "error": str(result)})
-            continue
+                print("Failure caught!")
+                failures.append({"chunk_file": chunk_file, "error": str(result)})
+    else:
+        for entry in chunks_entries:
+            chunk_file = entry["file"]
+            chunk_hash = entry["hash"]
+            print("------------------------------------")
+            print(f"Processing {chunk_file}")
+            chunk_art = ChunkAnalysis(
+                chunk_file=chunk_file,
+                chunk_hash=chunk_hash,
+                chunking=chunking,
+                analysis_builder=art.builder,
+                builder_params=art.builder_params,
+            )
+            # process chunk
+            chunk_out_dir = deps.need(chunk_art)
+            result = cloudpickle.loads((chunk_out_dir / "payload.pkl").read_bytes())
+    
+            #TODO: if config contains histserv_connection_info, then use the connection and add to the hist server, otherwise 
+            if result.is_ok():
+                print("Successfully processed!")
+                acc, metrics = _extract_acc(result)
+                if config.hist_client is not None:
+                    # acc is already connection_info (returned directly from run_analysis)
+                    # passing remote_hist directly is not possible because it holds a live gRPC connection, which is not picklable
+                    merged_acc = config.histserv_connection_info # connection info to histserv
+                else:
+                    merged_acc = accumulate([acc], accum=merged_acc) # accumulatable
+                metrics_merged = accumulate([metrics], accum=metrics_merged)
+            else:
+                print("Failure caught!")
+                failures.append({"chunk_file": chunk_file, "error": str(result)})
+                continue
 
     payload = {
         "builder": _builder_key(art.builder),

@@ -30,3 +30,7 @@ cache_hist
 .cache_by_dataset_50pct/
 .cache_mixed_50pct/
 .cache_no_split/
+dist
+.cache_coffea_casa/
+.cache_coffea_casa_dask/
+.cache_coffea_casa_parallel/

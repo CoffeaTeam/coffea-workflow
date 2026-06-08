@@ -1,0 +1,10 @@
+Bootstrap: docker
+From: gitlab-registry.cern.ch/batch-team/dask-lxplus/lxdask-al9:latest
+
+%post
+    pip install --no-cache-dir \
+"git+https://github.com/hooloobooroodkoo/coffea.git@processor_result_type" \
+"git+https://github.com/hooloobooroodkoo/coffea-workflow.git"
+
+%environment
+    export PYTHONNOUSERSITE=1

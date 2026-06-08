@@ -45,6 +45,7 @@ class ExecutorConfig:
     executor: Any | None = None
     worker_files: tuple[str, ...] = ()
     worker_packages: tuple[str, ...] = ()
+    parallel_chunks: bool = False
 
     def __post_init__(self):
         # workers files - are files that the user would need to install to dask client
