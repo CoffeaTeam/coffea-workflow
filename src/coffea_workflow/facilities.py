@@ -229,7 +229,7 @@ class CoffeaCasaFactory(FacilityBase):
         # Upload files before installing packages
         files = (ec.worker_files if ec else ()) or self.worker_files
         for f in files:
-            client.upload_file(f)
+            client.upload_file(f, load=False)
             print(f"Uploaded {f} to workers")
 
         packages = list((ec.worker_packages if ec else ()) or self.worker_packages)
