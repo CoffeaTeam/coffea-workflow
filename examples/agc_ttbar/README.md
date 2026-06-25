@@ -34,7 +34,7 @@ The example of this small code restructure can be found in [ttbar_analysis.py](h
 ## How does the workflow look
 Functions from the analysis file should be mapped to a corresponding step_type. See in the example:
 ```python
-from workflow import Step, Workflow, Fileset, Analysis, Plotting, RunConfig, render
+from workflow import Step, Workflow, Fileset, Analysis, Plotting, RunConfig, run
 from ttbar_analysis import get_fileset, run_analysis, plotting_1
 
 # Step 1. defines steps, map them with your functions
@@ -68,7 +68,7 @@ workflow.add(step_plot1, depends_on=[step_analysis])
 config = RunConfig(percentage=10, strategy="by_dataset", cache_dir="cache", chunk_fraction=0.3)
 
 # Step 4. Run while applying config
-result = render(workflow, config)
+result = run(workflow, config)
 ```
 Example:
 ```bash

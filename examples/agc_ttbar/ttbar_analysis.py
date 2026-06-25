@@ -101,6 +101,13 @@ class TtbarAnalysis(processor.ProcessorABC):
                 )
             
             self.use_triton = use_triton
+            if not use_triton:
+                # Pre-load models as instance attributes so cloudpickle embeds them
+                # in the serialized processor. Workers receive the models directly
+                # without needing the XGBoost model files on disk.
+                utils.ml.load_models()
+                self.model_even = utils.ml.model_even
+                self.model_odd = utils.ml.model_odd
 
     def only_do_IO(self, events):
         for branch in utils.config["benchmarking"]["IO_BRANCHES"][
@@ -136,14 +143,11 @@ class TtbarAnalysis(processor.ProcessorABC):
             xsec_weight = x_sec * lumi / nevts_total
         else:
             xsec_weight = 1
-
-        # setup triton gRPC client or xgboost
+            
+        # setup triton gRPC client (local models are already on self)
         if self.use_inference:
             if self.use_triton:
                 triton_client = utils.clients.get_triton_client(utils.config["ml"]["TRITON_URL"])
-            else:
-                if utils.ml.model_even is None:
-                    utils.ml.load_models()
 
 
         #### systematics
@@ -249,13 +253,12 @@ class TtbarAnalysis(processor.ProcessorABC):
                                 utils.config["ml"]["MODEL_VERSION_EVEN"],
                                 utils.config["ml"]["MODEL_VERSION_ODD"],
                             )
-
                         else:
                             results = utils.ml.get_inference_results_local(
                                 features,
                                 even_perm,
-                                utils.ml.model_even,
-                                utils.ml.model_odd,
+                                self.model_even,
+                                self.model_odd,
                             )
                             
                         results = ak.unflatten(results, perm_counts)
@@ -310,14 +313,17 @@ class TtbarAnalysis(processor.ProcessorABC):
     def postprocess(self, accumulator):
         return accumulator
 
-def run_analysis(fileset): # <- CHANGED, do not forget to pass fileset
+def run_analysis(fileset, executor=None): # <- CHANGED, do not forget to pass fileset
     NanoAODSchema.warn_missing_crossrefs = False # silences warnings about branches we will not use here
-    if USE_DASK:
-        cloudpickle.register_pickle_by_value(utils) # serialize methods and objects in utils so that they can be accessed within the coffea processor
-        # CHANGED TEMPORARILY
-        executor = processor.DaskExecutor(client=utils.clients.get_client(af="coffea_dev")) # dask client for coffea-casa, install my dev coffea on workers
+    if executor:
+        executor=executor
     else:
-        executor = processor.FuturesExecutor(workers=utils.config["benchmarking"]["NUM_CORES"])
+        if USE_DASK:
+            cloudpickle.register_pickle_by_value(utils) # serialize methods and objects in utils so that they can be accessed within the coffea processor
+            # CHANGED TEMPORARILY
+            executor = processor.DaskExecutor(client=utils.clients.get_client(af="coffea_dev")) # dask client for coffea-casa, install my dev coffea on workers
+        else:
+            executor = processor.FuturesExecutor(workers=utils.config["benchmarking"]["NUM_CORES"])
     
     run = processor.Runner(
                             executor=executor,
@@ -325,6 +331,7 @@ def run_analysis(fileset): # <- CHANGED, do not forget to pass fileset
                             savemetrics=True,
                             metadata_cache={},
                             chunksize=utils.config["benchmarking"]["CHUNKSIZE"],
+                            skipbadfiles=True, # CHANGED
                             use_result_type=True, # CHANGED
                         )
     

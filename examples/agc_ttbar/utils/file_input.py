@@ -76,7 +76,8 @@ def construct_fileset(n_files_max_per_sample, use_xcache=False, af_name="", loca
                 file_paths = local_paths
             nevts_total = sum([f["nevts"] for f in file_list])
             metadata = {"process": process, "variation": variation, "nevts": nevts_total, "xsec": xsec_info[process]}
-            fileset.update({f"{process}__{variation}": {"files": file_paths, "metadata": metadata}})
+            fileset.update({f"{process}__{variation}": {"files": file_paths, "treename": "Events", "metadata": metadata}})
+
 
     return fileset
 
