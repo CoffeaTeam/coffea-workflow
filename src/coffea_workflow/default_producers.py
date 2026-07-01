@@ -135,10 +135,25 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
         def _run_chunk_remote(chunk_fileset, builder_bytes, builder_params):
             """
             Runs on a Dask worker. No coffea_workflow imports — only coffea is required.
-            It's a serializable wrapper that replicates what run_analysis + _call_builder do locally, 
+            It's a serializable wrapper that replicates what run_analysis + _call_builder do locally,
             but without importing coffea_workflow (which may not be installed on workers).
             """
             import cloudpickle, inspect
+
+            # hist.Hist.identity() was required by coffea's old accumulator protocol but was
+            # removed from the hist package. IterativeExecutor hits this when merging per-file
+            # results inside a chunk. Restore it so the worker's coffea can accumulate.
+            try:
+                import hist as _hist
+                if not hasattr(_hist.Hist, "identity"):
+                    def _hist_identity(self):
+                        h = self.copy()
+                        h.reset()
+                        return h
+                    _hist.Hist.identity = _hist_identity
+            except ImportError:
+                pass
+
             from coffea.processor import IterativeExecutor
             fn = cloudpickle.loads(builder_bytes)
             sig = inspect.signature(fn).parameters

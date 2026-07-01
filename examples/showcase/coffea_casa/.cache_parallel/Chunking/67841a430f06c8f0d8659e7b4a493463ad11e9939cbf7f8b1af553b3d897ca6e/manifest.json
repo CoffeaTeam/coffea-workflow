@@ -1,0 +1,45 @@
+{
+  "n_chunks": 10,
+  "output_files": {
+    "0": {
+      "file": "fileset_chunk_0.json",
+      "hash": "a26f330ff7c10b37ff89c992a770f141c3dfedd05faab343cd7f41aaf1735a7b"
+    },
+    "1": {
+      "file": "fileset_chunk_1.json",
+      "hash": "3d98d9eab234e08ba957cdf5696be8b776905bc963f5b781a35efa9258827ec1"
+    },
+    "2": {
+      "file": "fileset_chunk_2.json",
+      "hash": "f2b5b27ef55160c12d52b7d081517e76cfce36d54f1b2c07673cfb7b876654cc"
+    },
+    "3": {
+      "file": "fileset_chunk_3.json",
+      "hash": "d49d2366db1967766ffe1371f3c55454838fd5dd6ef56c3fb7d2d645a1d7aebb"
+    },
+    "4": {
+      "file": "fileset_chunk_4.json",
+      "hash": "525735ff227ef3028dcae09b421c8eb794fc14697d33052d1532371384810e12"
+    },
+    "5": {
+      "file": "fileset_chunk_5.json",
+      "hash": "41581ca673cc79631cb401c592fdadc4ef7ca9cb7e6c89c90190d8b217f40652"
+    },
+    "6": {
+      "file": "fileset_chunk_6.json",
+      "hash": "40e178df95b25b7835871f9191c6a7f45f30ad697660dba2873671393b523fd3"
+    },
+    "7": {
+      "file": "fileset_chunk_7.json",
+      "hash": "e421da8f02899279f4bfff488de8644db2eb0a0840ab3be4c6ce1fdc8b410eb2"
+    },
+    "8": {
+      "file": "fileset_chunk_8.json",
+      "hash": "bff270cf692179cf0f440a5189173a843f98b2c0d1ffe0f9b252f0a214c28260"
+    },
+    "9": {
+      "file": "fileset_chunk_9.json",
+      "hash": "4afb9703c45c4041d1af08082f6132d73cbca3575000af3c27253c4edc3d29d9"
+    }
+  }
+}
