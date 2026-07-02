@@ -404,6 +404,8 @@ class LxplusFactory(FacilityBase):
               --bind /etc/condor \\
               --bind "$KRB5DIR" \\
               --env KRB5CCNAME=$KRB5CCNAME \\
+              --env X509_USER_PROXY=/tmp/x509up_u$(id -u) \\
+              --env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \\
               ./{sif_name} python3 {entry_script}
         """))
         lxplus_script.chmod(0o755)
@@ -461,6 +463,7 @@ class LxplusFactory(FacilityBase):
         raise ValueError(f"Unsupported executor_type: {executor_type!r}")
 
     def _build_dask(self, ec: ExecutorConfig | None) -> Any:
+        import sys
         from dask_jobqueue import HTCondorCluster
         from dask.distributed import Client
         from coffea.processor import DaskExecutor
@@ -470,17 +473,37 @@ class LxplusFactory(FacilityBase):
         if self.extra_pythonpath:
             expanded = ":".join(os.path.expanduser(p) for p in self.extra_pythonpath)
             env_extra.append(f"PYTHONPATH={expanded}")
-            
+
+        # dask-jobqueue defaults to sys.executable, which may point to a host
+        # virtualenv (e.g. in /afs/) that doesn't exist on batch nodes.
+        # If that happens, fail early with a clear message instead of submitting
+        # jobs that immediately exit 127.
+        python_bin = sys.executable
+        if "/afs/" in python_bin or "lxplus-env" in python_bin:
+            raise RuntimeError(
+                f"sys.executable points to an AFS virtualenv: {python_bin}\n"
+                "HTCondor workers would fail to start because that path is not\n"
+                "available inside the Apptainer container on batch nodes.\n\n"
+                "Fix: run the container with --cleanenv so the host virtualenv\n"
+                "does not leak into the container's PATH. Your run_on_lxplus.sh\n"
+                "should include --cleanenv in the apptainer exec call.\n"
+                "Re-generate it by running your script locally once more."
+            )
+
         cluster = HTCondorCluster(
             cores=self.cores,
             memory=self.memory,
             disk=self.disk,
             log_directory=self.log_directory,
+            python=python_bin,
+            scheduler_options={"port": 8786, "dashboard_address": ":8787"},
+            worker_extra_args=["--worker-port", "10000:10100"],
             job_extra_directives={
                 "+SingularityImage": f'"{worker_image}"',
                 "+JobFlavour": f'"{self.queue}"',
                 "stream_output": "False",
                 "stream_error": "False",
+                "transfer_output_files": '""',
             },
         )
         n_workers = (ec.workers if ec else None) or self.workers
