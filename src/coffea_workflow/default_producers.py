@@ -101,9 +101,9 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
 
     chunks_files_num = manifest["n_chunks"]
     if chunks_files_num > 1:
-        _safe_print(f"\nSplit strategy applied, starting independent processing of {chunks_files_num} fileset subsets...\n")
+        _safe_print(f"\nSplit strategy {config.strategy!r}: processing {chunks_files_num} fileset subsets independently...\n")
     else:
-        _safe_print(f"\nNo split strategy was specified, proceed with processing the whole fileset...")
+        _safe_print(f"\nNo split strategy — processing the whole fileset as one...")
 
     if config.chunk_fraction is not None:
         n = max(1, round(len(chunks_entries) * config.chunk_fraction))

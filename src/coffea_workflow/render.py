@@ -115,6 +115,34 @@ def _print_dag(workflow: Workflow) -> None:
         _safe_print("Edges: (none)")
 
 
+def _print_run_config(config: RunConfig) -> None:
+    _safe_print("Run config:")
+    _safe_print(f"  Strategy:  {config.strategy or 'none'}")
+
+    ec = config.executor_config
+    if ec is not None and ec.executor is None:
+        _safe_print(f"  Executor:  {ec.executor_type}  workers={ec.workers}")
+    elif ec is not None:
+        _safe_print(f"  Executor:  custom ({type(ec.executor).__name__})")
+    else:
+        _safe_print(f"  Executor:  default (FuturesExecutor)")
+
+    fac = config.facility
+    if fac is None:
+        _safe_print(f"  Facility:  local")
+    else:
+        fac_name = type(fac).__name__
+        parts = []
+        if hasattr(fac, "queue"):
+            parts.append(f"queue={fac.queue!r}")
+        if hasattr(fac, "workers"):
+            parts.append(f"workers={fac.workers}")
+        if hasattr(fac, "worker_image") and fac.worker_image:
+            parts.append(f"image={fac.worker_image!r}")
+        detail = f"  ({', '.join(parts)})" if parts else ""
+        _safe_print(f"  Facility:  {fac_name}{detail}")
+
+
 def _resolve_step_config(workflow_config: RunConfig, step: Step) -> RunConfig:
     """
     Merge per-step facility/executor overrides into the workflow config.
@@ -144,6 +172,7 @@ def run(workflow: Workflow, config: RunConfig):
     cache_dir = Path(config.cache_dir)
     executor = Executor(cache_dir=cache_dir, config=config)
     _print_dag(workflow)
+    _print_run_config(config)
     num_steps = len(workflow.steps)
     if num_steps == 0:
         return {"paths": {}, "artifacts": {}, "order": []}
