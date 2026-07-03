@@ -172,7 +172,9 @@ def run(workflow: Workflow, config: RunConfig):
     cache_dir = Path(config.cache_dir)
     executor = Executor(cache_dir=cache_dir, config=config)
     _print_dag(workflow)
+    _safe_print()
     _print_run_config(config)
+    _safe_print()
     num_steps = len(workflow.steps)
     if num_steps == 0:
         return {"paths": {}, "artifacts": {}, "order": []}
@@ -196,6 +198,7 @@ def run(workflow: Workflow, config: RunConfig):
         )
         path = executor.materialize(artifact, config=effective_config)
         _safe_print(f"  -> materialized at {path}")
+        _safe_print()
 
         artifact_by_idx[idx] = artifact
         paths_by_name[step_name] = path
