@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use coffea-workflow in your work, please cite it as below."
+authors:
+  - family-names: Holoborodko
+    given-names: Yana
+    affiliation: "IRIS-HEP, Princeton University"
+    orcid: "https://orcid.org/0009-0002-5268-7804"
+title: "coffea-workflow"
+version: 0.1.0
+date-released: 2026-07-06
+repository-code: "https://github.com/hooloobooroodkoo/coffea-workflow"
+abstract: >
+  A workflow manager and HEP-specific extension for coffea analyses,
+  providing partial result caching via split strategies, facility factories
+  for smooth switching between local, coffea-casa, and CERN lxplus execution,
+  and configurable sequential or parallel chunk dispatch.
+keywords:
+  - HEP
+  - coffea
+  - workflow
+  - physics analysis
