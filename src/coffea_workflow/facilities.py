@@ -37,11 +37,12 @@ import socket
 import subprocess
 import importlib.util
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 from pathlib import Path
 import textwrap
 
 from .config import FacilityBase, ExecutorConfig
+from .producers_utils import _safe_print
 
 # ---------------------------------------------------------------------------
 # Container helpers
@@ -108,34 +109,34 @@ def generate_apptainer_def(
     Path(output).write_text(content)
 
     sif = Path(output).with_suffix(".sif").name
-    print(f"{output!r} was created!")
-    print()
-    print("Default image used for the base:")
-    print(f"  {_DEFAULT_BASE_IMAGE}")
-    print()
-    print("Default sources (change these if needed):")
-    print(f"  coffea:           {coffea_source}")
-    print(f"  coffea-workflow:  {coffea_workflow_source}")
-    print()
-    print("To inspect your current environment and pin specific versions:")
-    print("  pip freeze | grep -E 'coffea|uproot|awkward|hist|vector|dask|correctionlib'")
-    print("  Then pass them as: extra_packages=('uproot==5.x.y', 'awkward==2.x.y', ...)")
-    print()
+    _safe_print(f"{output!r} was created!")
+    _safe_print()
+    _safe_print("Default image used for the base:")
+    _safe_print(f"  {_DEFAULT_BASE_IMAGE}")
+    _safe_print()
+    _safe_print("Default sources (change these if needed):")
+    _safe_print(f"  coffea:           {coffea_source}")
+    _safe_print(f"  coffea-workflow:  {coffea_workflow_source}")
+    _safe_print()
+    _safe_print("To inspect your current environment and pin specific versions:")
+    _safe_print("  pip freeze | grep -E 'coffea|uproot|awkward|hist|vector|dask|correctionlib'")
+    _safe_print("  Then pass them as: extra_packages=('uproot==5.x.y', 'awkward==2.x.y', ...)")
+    _safe_print()
     if _print_build_instructions:
-        print("Build instructions:")
-        print(f"  1. scp {output} <username>@lxplus.cern.ch:~/{output}")
-        print("  2. scp -r /path/to/your/analysis <username>@lxplus.cern.ch:~/analysis")
-        print("  3. ssh <username>@lxplus.cern.ch")
-        print("  4. condor_submit -interactive        # get a batch node, wait for shell")
-        print(f"  5. cp ~/{output} .  &&  apptainer build --fakeroot {sif} {output}")
-        print(f"  6. cp {sif} ~/{sif}   # ~/  is AFS — same from login and batch nodes; wait, it's slow")
-        print()
-        print("To run directly:")
-        print("  voms-proxy-init --voms cms --valid 192:00")
-        print(f"  apptainer exec ~/{sif} python ~/path/to/your_script.py")
-        print()
-        print("Or with coffea-workflow LxplusFactory:")
-        print(f"  LxplusFactory(worker_image='~/{sif}', ...)")
+        _safe_print("Build instructions:")
+        _safe_print(f"  1. scp {output} <username>@lxplus.cern.ch:~/{output}")
+        _safe_print("  2. scp -r /path/to/your/analysis <username>@lxplus.cern.ch:~/analysis")
+        _safe_print("  3. ssh <username>@lxplus.cern.ch")
+        _safe_print("  4. condor_submit -interactive        # get a batch node, wait for shell")
+        _safe_print(f"  5. cp ~/{output} .  &&  apptainer build --fakeroot {sif} {output}")
+        _safe_print(f"  6. cp {sif} ~/{sif}   # ~/  is AFS — same from login and batch nodes; wait, it's slow")
+        _safe_print()
+        _safe_print("To run directly:")
+        _safe_print("  voms-proxy-init --voms cms --valid 192:00")
+        _safe_print(f"  apptainer exec ~/{sif} python ~/path/to/your_script.py")
+        _safe_print()
+        _safe_print("Or with coffea-workflow LxplusFactory:")
+        _safe_print(f"  LxplusFactory(worker_image='~/{sif}', ...)")
 
     return output
 
@@ -169,7 +170,8 @@ class LocalFactory(FacilityBase):
             return IterativeExecutor()
 
         if executor_type == "FuturesExecutor":
-            return FuturesExecutor(workers=ec.workers if ec else self.workers)
+            n = (ec.workers if ec and ec.workers is not None else None) or self.workers
+            return FuturesExecutor(workers=n)
 
         if executor_type == "DaskExecutor":
             addr = (ec.dask_scheduler if ec else None) or self.scheduler_address
@@ -200,6 +202,7 @@ class CoffeaCasaFactory(FacilityBase):
     at tls://localhost:8786. Other executor types are created directly.
     # TODO: optimised ways to run the analysis? optimised number of batches? split_strategy?
     """
+    default_executor_type: ClassVar[str] = "DaskExecutor"
     scheduler_address: str = "tls://localhost:8786"
     worker_packages: tuple[str, ...] = ()
     worker_files: tuple[str, ...] = ()
@@ -220,7 +223,8 @@ class CoffeaCasaFactory(FacilityBase):
             return IterativeExecutor()
 
         if executor_type == "FuturesExecutor":
-            return FuturesExecutor(workers=ec.workers if ec else 4)
+            n = (ec.workers if ec and ec.workers is not None else None) or 4
+            return FuturesExecutor(workers=n)
 
         if executor_type == "DaskExecutor":
             return self._build_dask(ec)
@@ -228,7 +232,7 @@ class CoffeaCasaFactory(FacilityBase):
         raise ValueError(f"Unsupported executor_type: {executor_type!r}")
 
     def _build_dask(self, ec: ExecutorConfig | None) -> Any:
-        print("Connecting to Dask scheduler...")
+        _safe_print("Connecting to Dask scheduler...")
         from coffea.processor import DaskExecutor
         from dask.distributed import Client, PipInstall
 
@@ -239,10 +243,10 @@ class CoffeaCasaFactory(FacilityBase):
         for f in files:
             try:
                 client.upload_file(f, load=False)
-                print(f"Uploaded {f} to workers")
+                _safe_print(f"Uploaded {f} to workers")
             except IsADirectoryError:
                 folder = Path(f)
-                print(f"{folder.name}/ is a directory, zipping...")
+                _safe_print(f"{folder.name}/ is a directory, zipping...")
                 zip_path = shutil.make_archive(
                     str(folder.resolve()),
                     "zip",
@@ -252,12 +256,12 @@ class CoffeaCasaFactory(FacilityBase):
                 # load=True is required for zips: Dask must add the zip itself to
                 # sys.path so Python's zipimport can find the package inside it.
                 client.upload_file(zip_path, load=True)
-                print(f"Uploaded {folder.name}/ as {folder.name}.zip to workers")
+                _safe_print(f"Uploaded {folder.name}/ as {folder.name}.zip to workers")
 
         packages = list((ec.worker_packages if ec else ()) or self.worker_packages)
         if packages:
             client.register_plugin(PipInstall(packages=packages))
-            print(f"Installing on workers: {packages}")
+            _safe_print(f"Installing on workers: {packages}")
 
 
         return DaskExecutor(client=client)
@@ -364,18 +368,18 @@ class LxplusFactory(FacilityBase):
         """Generate worker.def and a run script, then print lxplus deployment instructions."""
         import sys as _sys
 
-        print()
-        print("=" * 60)
-        print("LxplusFactory: running locally — preparing lxplus deployment.")
-        print("=" * 60)
+        _safe_print()
+        _safe_print("=" * 60)
+        _safe_print("LxplusFactory: running locally — preparing lxplus deployment.")
+        _safe_print("=" * 60)
 
         def_path = Path("worker.def")
         if def_path.exists():
-            print(f"\nworker.def already exists — keeping it.")
+            _safe_print(f"\nworker.def already exists — keeping it.")
         else:
-            print("\nNo worker.def found. Creating one.")
-            print("Tip: check what's in your current environment with:")
-            print("  pip freeze | grep -E 'coffea|uproot|awkward|hist|vector|dask|correctionlib'")
+            _safe_print("\nNo worker.def found. Creating one.")
+            _safe_print("Tip: check what's in your current environment with:")
+            _safe_print("  pip freeze | grep -E 'coffea|uproot|awkward|hist|vector|dask|correctionlib'")
             raw_pkgs = input(
                 "Extra packages to install in the image "
                 "(comma-separated, or Enter to skip): "
@@ -386,7 +390,7 @@ class LxplusFactory(FacilityBase):
                 extra_packages=extra_packages,
                 _print_build_instructions=False,
             )
-            print("worker.def created.")
+            _safe_print("worker.def created.")
 
         sif_name = Path(self.worker_image).name if self.worker_image else "worker.sif"
         entry_script = Path(_sys.argv[0]).name
@@ -409,32 +413,32 @@ class LxplusFactory(FacilityBase):
               ./{sif_name} python3 {entry_script}
         """))
         lxplus_script.chmod(0o755)
-        print("run_on_lxplus.sh created.")
+        _safe_print("run_on_lxplus.sh created.")
 
         cwd = Path.cwd()
         folder = cwd.name
 
-        print()
-        print("=" * 60)
-        print("Next steps:")
-        print()
-        print("1. Copy this folder to lxplus:")
-        print(f"   scp -r {cwd} <username>@lxplus.cern.ch:~/{folder}")
-        print()
-        print("2. Build the Apptainer image on a batch node:")
-        print("   ssh <username>@lxplus.cern.ch")
-        print(f"   cd ~/{folder}")
-        print("   condor_submit -interactive    # wait for the batch shell")
-        print(f"   cd ~/{folder}               # batch starts in a scratch dir; AFS is shared")
-        print(f"   apptainer build --fakeroot {sif_name} worker.def")
-        print()
-        print("3. Run the analysis:")
-        print(f"   bash run_on_lxplus.sh")
-        print()
-        print(f"The built {sif_name} is saved in ~/{folder}/ on AFS — it persists")
-        print("between sessions and is picked up automatically on subsequent runs.")
-        print("Rebuild only if you change packages or update coffea/coffea-workflow.")
-        print("=" * 60)
+        _safe_print()
+        _safe_print("=" * 60)
+        _safe_print("Next steps:")
+        _safe_print()
+        _safe_print("1. Copy this folder to lxplus:")
+        _safe_print(f"   scp -r {cwd} <username>@lxplus.cern.ch:~/{folder}")
+        _safe_print()
+        _safe_print("2. Build the Apptainer image on a batch node:")
+        _safe_print("   ssh <username>@lxplus.cern.ch")
+        _safe_print(f"   cd ~/{folder}")
+        _safe_print("   condor_submit -interactive    # wait for the batch shell")
+        _safe_print(f"   cd ~/{folder}               # batch starts in a scratch dir; AFS is shared")
+        _safe_print(f"   apptainer build --fakeroot {sif_name} worker.def")
+        _safe_print()
+        _safe_print("3. Run the analysis:")
+        _safe_print(f"   bash run_on_lxplus.sh")
+        _safe_print()
+        _safe_print(f"The built {sif_name} is saved in ~/{folder}/ on AFS — it persists")
+        _safe_print("between sessions and is picked up automatically on subsequent runs.")
+        _safe_print("Rebuild only if you change packages or update coffea/coffea-workflow.")
+        _safe_print("=" * 60)
 
     def build(self, ec: ExecutorConfig | None) -> Any:
         import sys
@@ -455,7 +459,8 @@ class LxplusFactory(FacilityBase):
             return IterativeExecutor()
 
         if executor_type == "FuturesExecutor":
-            return FuturesExecutor(workers=ec.workers if ec else self.workers)
+            n = (ec.workers if ec and ec.workers is not None else None) or self.workers
+            return FuturesExecutor(workers=n)
 
         if executor_type == "DaskExecutor":
             return self._build_dask(ec)
@@ -468,6 +473,11 @@ class LxplusFactory(FacilityBase):
         from dask.distributed import Client
         from coffea.processor import DaskExecutor
 
+        if self.worker_image is None:
+            raise RuntimeError(
+                "worker_image is not set. Either call preflight() first so it is resolved "
+                "from worker.sif, or pass worker_image= to LxplusFactory()."
+            )
         worker_image = os.path.expanduser(self.worker_image)
         env_extra = []
         if self.extra_pythonpath:
@@ -496,7 +506,7 @@ class LxplusFactory(FacilityBase):
             disk=self.disk,
             log_directory=self.log_directory,
             python=python_bin,
-            scheduler_options={"port": 8786, "dashboard_address": ":8787"},
+            scheduler_options={"dashboard_address": ":8787"},
             worker_extra_args=["--worker-port", "10000:10100"],
             job_extra_directives={
                 "+SingularityImage": f'"{worker_image}"',
@@ -506,10 +516,10 @@ class LxplusFactory(FacilityBase):
                 "transfer_output_files": '""',
             },
         )
-        n_workers = (ec.workers if ec else None) or self.workers
+        n_workers = (ec.workers if ec and ec.workers is not None else None) or self.workers
         cluster.scale(n_workers)
-        print(f"Submitted {n_workers} HTCondor jobs (queue={self.queue!r}, image={self.worker_image!r}).")
-        print(f"Dashboard: {cluster.dashboard_link}")
+        _safe_print(f"Submitted {n_workers} HTCondor jobs (queue={self.queue!r}, image={self.worker_image!r}).")
+        _safe_print(f"Dashboard: {cluster.dashboard_link}")
 
         client = Client(cluster)
         self._cluster = cluster
@@ -518,12 +528,12 @@ class LxplusFactory(FacilityBase):
         if packages:
             from dask.distributed import PipInstall
             client.register_plugin(PipInstall(packages=packages))
-            print(f"Installing on workers: {packages}")
+            _safe_print(f"Installing on workers: {packages}")
 
         files = (ec.worker_files if ec else ()) or self.worker_files
         for f in files:
             client.upload_file(f)
-            print(f"Uploaded {f} to workers")
+            _safe_print(f"Uploaded {f} to workers")
 
         return DaskExecutor(client=client)
 
