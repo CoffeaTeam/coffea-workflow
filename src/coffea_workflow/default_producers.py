@@ -97,8 +97,6 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
     manifest = json.loads(manifest_path.read_text())
     chunks_entries = list(manifest["output_files"].values())
 
-    deps.coffea_executor()
-
     chunks_files_num = manifest["n_chunks"]
     if chunks_files_num > 1:
         _safe_print(f"\nSplit strategy {config.strategy!r}: processing {chunks_files_num} fileset subsets independently...\n")
@@ -195,13 +193,23 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
                 chunk_fileset = json.loads((chunk_dir / ca.chunk_file).read_text())
                 futures[i] = client.submit(_run_chunk_remote, chunk_fileset, builder_bytes, builder_params)
 
-            gathered = client.gather(list(futures.values()))
-            for idx, result_bytes in zip(futures.keys(), gathered):
+            gathered = client.gather(list(futures.values()), return_exceptions=True)
+            for idx, result_or_exc in zip(futures.keys(), gathered):
                 ca = chunk_arts[idx]
                 out_dir = deps._executor.path_for(ca)
                 out_dir.mkdir(parents=True, exist_ok=True)
-                (out_dir / "payload.pkl").write_bytes(result_bytes)
-                (out_dir / ".success").touch()
+                if isinstance(result_or_exc, BaseException):
+                    _exc = result_or_exc
+                    class _ExcResult:
+                        def is_ok(self): return False
+                        def __str__(self): return f"Worker exception: {_exc}"
+                    payload = cloudpickle.dumps(_ExcResult())
+                else:
+                    payload = result_or_exc
+                (out_dir / "payload.pkl").write_bytes(payload)
+                _r = cloudpickle.loads(payload)
+                if _r.is_ok():
+                    (out_dir / ".success").touch()
                 deps._executor._session_cache.add(out_dir)
 
         for i, (entry, ca) in enumerate(zip(chunks_entries, chunk_arts)):
