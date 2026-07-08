@@ -18,6 +18,9 @@ class FacilityBase(ABC):
       - close(): tear down any resources created by build() (e.g. a Dask cluster)
     """
 
+    # what build() creates when no ExecutorConfig is given; used for display
+    default_executor_type: str = "FuturesExecutor"
+
     @abstractmethod
     def build(self, ec: "ExecutorConfig | None") -> Any:
         """Build and return a coffea executor."""
@@ -41,7 +44,7 @@ class ExecutorConfig:
            ExecutorConfig(executor=processor.DaskExecutor(client=my_client))
     """
     executor_type: Literal["IterativeExecutor", "FuturesExecutor", "DaskExecutor"] = "FuturesExecutor"
-    workers: int = 1
+    workers: int | None = None  # None = use the facility's default worker count
     chunks_per_worker: int = 1
     dask_scheduler: str | None = None
     executor: Any | None = None
@@ -61,7 +64,7 @@ class ExecutorConfig:
             raise ValueError(f"Invalid executor_type={self.executor_type!r}. Supported types are IterativeExecutor, FuturesExecutor, DaskExecutor")
         # dask_scheduler is no longer required here; a FacilityConfig on the Step or RunConfig
         # can supply the scheduler address at build_executor() time.
-        if self.workers < 1:
+        if self.workers is not None and self.workers < 1:
             raise ValueError("workers must be >= 1")
         if self.chunks_per_worker < 1:
             raise ValueError("chunks_per_worker must be >= 1")

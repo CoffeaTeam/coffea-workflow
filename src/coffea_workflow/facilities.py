@@ -469,15 +469,17 @@ class LxplusFactory(FacilityBase):
 
     def _build_dask(self, ec: ExecutorConfig | None) -> Any:
         import sys
-        from dask_jobqueue import HTCondorCluster
-        from dask.distributed import Client
-        from coffea.processor import DaskExecutor
 
         if self.worker_image is None:
             raise RuntimeError(
                 "worker_image is not set. Either call preflight() first so it is resolved "
                 "from worker.sif, or pass worker_image= to LxplusFactory()."
             )
+
+        from dask_jobqueue import HTCondorCluster
+        from dask.distributed import Client
+        from coffea.processor import DaskExecutor
+
         worker_image = os.path.expanduser(self.worker_image)
         env_extra = []
         if self.extra_pythonpath:

@@ -140,7 +140,8 @@ class TestExecutorConfigDefaults:
         assert ExecutorConfig().executor_type == "FuturesExecutor"
 
     def test_workers_default(self):
-        assert ExecutorConfig().workers == 1
+        # None means "use the facility's default worker count"
+        assert ExecutorConfig().workers is None
 
     def test_chunks_per_worker_default(self):
         assert ExecutorConfig().chunks_per_worker == 1
