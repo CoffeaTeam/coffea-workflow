@@ -193,7 +193,16 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
                 chunk_fileset = json.loads((chunk_dir / ca.chunk_file).read_text())
                 futures[i] = client.submit(_run_chunk_remote, chunk_fileset, builder_bytes, builder_params)
 
-            gathered = client.gather(list(futures.values()), return_exceptions=True)
+            # Client.gather has no asyncio-style return_exceptions; collect
+            # per-future so a failed chunk yields its exception in place and
+            # results stay aligned with chunk indices.
+            gathered = []
+            for f in futures.values():
+                try:
+                    gathered.append(f.result())
+                except Exception as exc:
+                    gathered.append(exc)
+                    
             for idx, result_or_exc in zip(futures.keys(), gathered):
                 ca = chunk_arts[idx]
                 out_dir = deps._executor.path_for(ca)
