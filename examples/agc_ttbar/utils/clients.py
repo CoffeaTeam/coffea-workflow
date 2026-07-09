@@ -4,12 +4,12 @@ def get_client(af="coffea_casa"):
 
         client = Client("tls://localhost:8786")
         
-    elif af == "coffea_dev":
+    elif af == "coffea_with_result_type":
         from dask.distributed import Client
 
         client = Client("tls://localhost:8786")
         from dask.distributed import PipInstall
-        plugin = PipInstall(packages=["coffea@git+https://github.com/hooloobooroodkoo/coffea.git@processor_result_type"])
+        plugin = PipInstall(packages=["coffea>=2026.7.0"])
         client.register_plugin(plugin)
         
     elif af == "EAF":

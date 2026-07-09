@@ -52,10 +52,8 @@ _DEFAULT_BASE_IMAGE = (
     "gitlab-registry.cern.ch/batch-team/dask-lxplus/lxdask-al9:latest"
 )
 
-# the one that is mandatory to use as for now for coffea-workflow
-_DEFAULT_COFFEA_SOURCE = (
-    "git+https://github.com/hooloobooroodkoo/coffea.git@processor_result_type"
-)
+# minimum coffea release with use_result_type support required by coffea-workflow
+_DEFAULT_COFFEA_SOURCE = "coffea>=2026.7.0"
 _DEFAULT_COFFEA_WORKFLOW_SOURCE = (
     "git+https://github.com/hooloobooroodkoo/coffea-workflow.git"
 )

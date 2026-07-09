@@ -321,7 +321,7 @@ def run_analysis(fileset, executor=None): # <- CHANGED, do not forget to pass fi
         if USE_DASK:
             cloudpickle.register_pickle_by_value(utils) # serialize methods and objects in utils so that they can be accessed within the coffea processor
             # CHANGED TEMPORARILY
-            executor = processor.DaskExecutor(client=utils.clients.get_client(af="coffea_dev")) # dask client for coffea-casa, install my dev coffea on workers
+            executor = processor.DaskExecutor(client=utils.clients.get_client(af="coffea_with_result_type")) # dask client for coffea-casa, install my dev coffea on workers
         else:
             executor = processor.FuturesExecutor(workers=utils.config["benchmarking"]["NUM_CORES"])
     
