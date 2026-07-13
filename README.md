@@ -36,7 +36,7 @@ Without a pre-defined workflow layer, coffea users tend to write ad-hoc scripts 
 ### Install coffea-workflow
 
 ```bash
-git clone https://github.com/hooloobooroodkoo/coffea-workflow-engine.git
+git clone https://github.com/hooloobooroodkoo/coffea-workflow.git
 cd coffea-workflow-engine
 python -m pip install .
 ```
