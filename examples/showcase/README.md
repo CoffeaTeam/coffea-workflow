@@ -16,4 +16,3 @@ to showcase how coffea-workflow helps to preserve partial results and to run the
 | [coffea_casa/](coffea_casa/) | Running with `CoffeaCasaFactory` and a Dask cluster |
 | [lxplus/](lxplus/) | Building an Apptainer image and running with `LxplusFactory` on CERN lxplus |
 | [optimisation/](optimisation/) | *(under development)* Performance measurements across facilities, executors, and split strategies |
-| [snakemake/](snakemake/) | *(under development)* Running with the Snakemake backend for chunk-level(subset of the fileset) parallelism |
