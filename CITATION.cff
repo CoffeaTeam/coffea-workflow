@@ -8,7 +8,7 @@ authors:
 title: "coffea-workflow"
 version: 0.1.0
 date-released: 2026-07-06
-repository-code: "https://github.com/hooloobooroodkoo/coffea-workflow"
+repository-code: "https://github.com/CoffeaTeam/coffea-workflow"
 abstract: >
   A workflow manager and HEP-specific extension for coffea analyses,
   providing partial result caching via split strategies, facility factories

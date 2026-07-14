@@ -37,4 +37,4 @@ Initial release.
 - coffea >= 2026.7.0 (first release exposing `use_result_type` on
   `processor.Runner`)
 
-[0.1.0]: https://github.com/hooloobooroodkoo/coffea-workflow/releases/tag/v0.1.0
+[0.1.0]: https://github.com/CoffeaTeam/coffea-workflow/releases/tag/v0.1.0

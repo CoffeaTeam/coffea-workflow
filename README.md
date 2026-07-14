@@ -36,7 +36,7 @@ Without a pre-defined workflow layer, coffea users tend to write ad-hoc scripts 
 ### Install coffea-workflow
 
 ```bash
-git clone https://github.com/hooloobooroodkoo/coffea-workflow.git
+git clone https://github.com/CoffeaTeam/coffea-workflow.git
 cd coffea-workflow-engine
 python -m pip install .
 ```
@@ -121,7 +121,7 @@ That is the whole API surface. `coffea-workflow` handles caching, splitting, fau
 | `strategy=None, percentage=20` | 5 mixed across all datasets | quick sanity checks on a representative slice |
 | `strategy="by_dataset", percentage=20` | 5 per dataset (15 total for 3 datasets) | large filesets, maximum fault tolerance |
 
-**Smaller chunks preserve more work on failure** — only the failed chunk is retried, not the whole analysis. However, very small chunks add scheduling overhead on batch systems (more HTCondor job submissions). See [examples/showcase/split_strategy/](examples/showcase/split_strategy/) for a worked notebook of each strategy.
+**Smaller chunks preserve more work on failure** — only the failed chunk is retried, not the whole analysis. However, very small chunks add scheduling overhead on batch systems (more HTCondor job submissions). See [examples/showcase/split_strategy/](https://github.com/CoffeaTeam/coffea-workflow/tree/main/examples/showcase/split_strategy/) for a worked notebook of each strategy.
 
 ```python
 # One chunk per dataset — if one dataset's storage fails, the others succeed
@@ -174,7 +174,7 @@ from coffea_workflow.facilities import generate_apptainer_def
 generate_apptainer_def(extra_packages=("correctionlib==2.1.0",))
 ```
 
-See [examples/showcase/facilities/](examples/showcase/facilities/) for a full worked example.
+See [examples/showcase/facilities/](https://github.com/CoffeaTeam/coffea-workflow/tree/main/examples/showcase/facilities/) for a full worked example.
 
 ---
 
@@ -204,7 +204,7 @@ config = RunConfig(
 )
 ```
 
-A worked analysis of the trade-offs is in [examples/showcase/optimisation/](examples/showcase/optimisation/).
+A worked analysis of the trade-offs is in [examples/showcase/optimisation/](https://github.com/CoffeaTeam/coffea-workflow/tree/main/examples/showcase/optimisation/).
 
 ---
  
@@ -373,7 +373,7 @@ conn = previous_result["results"]["Analysis"]["merged"]
 config = RunConfig(hist_client=hist_client, histserv_connection_info=conn, ...)
 ```
 
-See [examples/coffea_workflow_histserv/](examples/coffea_workflow_histserv/) for a full worked example.
+See [examples/coffea_workflow_histserv/](https://github.com/CoffeaTeam/coffea-workflow/tree/main/examples/coffea_workflow_histserv/) for a full worked example.
 
 ---
 
@@ -381,12 +381,12 @@ See [examples/coffea_workflow_histserv/](examples/coffea_workflow_histserv/) for
 
 | Location | What it shows |
 |---|---|
-| [examples/showcase/split_strategy/](examples/showcase/split_strategy/) | One notebook per split strategy, sharing a common analysis |
-| [examples/showcase/facilities/](examples/showcase/facilities/) | Switching between local, coffea-casa, and lxplus |
-| [examples/showcase/optimisation/](examples/showcase/optimisation/) | Sequential vs parallel execution benchmarks (in progress) |
-| [examples/coffea_workflow/](examples/coffea_workflow/) | Simple accumulator workflow (no histserv) |
-| [examples/coffea_workflow_histserv/](examples/coffea_workflow_histserv/) | Same workflow with the histserv histogram server |
-| [examples/agc_ttbar/](examples/agc_ttbar/) | Full AGC ttbar analysis |
+| [examples/showcase/split_strategy/](https://github.com/CoffeaTeam/coffea-workflow/tree/main/examples/showcase/split_strategy/) | One notebook per split strategy, sharing a common analysis |
+| [examples/showcase/facilities/](https://github.com/CoffeaTeam/coffea-workflow/tree/main/examples/showcase/facilities/) | Switching between local, coffea-casa, and lxplus |
+| [examples/showcase/optimisation/](https://github.com/CoffeaTeam/coffea-workflow/tree/main/examples/showcase/optimisation/) | Sequential vs parallel execution benchmarks (in progress) |
+| [examples/coffea_workflow/](https://github.com/CoffeaTeam/coffea-workflow/tree/main/examples/coffea_workflow/) | Simple accumulator workflow (no histserv) |
+| [examples/coffea_workflow_histserv/](https://github.com/CoffeaTeam/coffea-workflow/tree/main/examples/coffea_workflow_histserv/) | Same workflow with the histserv histogram server |
+| [examples/agc_ttbar/](https://github.com/CoffeaTeam/coffea-workflow/tree/main/examples/agc_ttbar/) | Full AGC ttbar analysis |
 
 ---
 

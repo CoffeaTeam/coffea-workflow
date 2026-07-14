@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "coffea-workflow"
 version = "0.1.0"
 description = "A workflow manager and HEP-specific extension for coffea analyses, providing partial result caching, facility factories, and configurable chunk dispatch."
+readme = "README.md"
 authors = [
     {name = "Yana Holoborodko", email = "goloborodko.yana2016@gmail.com"},
 ]
@@ -29,9 +30,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/hooloobooroodkoo/coffea-workflow"
-Repository = "https://github.com/hooloobooroodkoo/coffea-workflow"
-Issues = "https://github.com/hooloobooroodkoo/coffea-workflow/issues"
+Homepage = "https://github.com/CoffeaTeam/coffea-workflow"
+Repository = "https://github.com/CoffeaTeam/coffea-workflow"
+Issues = "https://github.com/CoffeaTeam/coffea-workflow/issues"
 
 [project.entry-points."coffea.extensions"]
 workflow = "coffea_workflow"
