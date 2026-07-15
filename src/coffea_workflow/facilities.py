@@ -54,9 +54,7 @@ _DEFAULT_BASE_IMAGE = (
 
 # minimum coffea release with use_result_type support required by coffea-workflow
 _DEFAULT_COFFEA_SOURCE = "coffea>=2026.7.0"
-_DEFAULT_COFFEA_WORKFLOW_SOURCE = (
-    "git+https://github.com/hooloobooroodkoo/coffea-workflow.git"
-)
+_DEFAULT_COFFEA_WORKFLOW_SOURCE = "coffea-workflow"
 
 
 def generate_apptainer_def(

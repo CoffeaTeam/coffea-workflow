@@ -31,14 +31,8 @@ Without a pre-defined workflow layer, coffea users tend to write ad-hoc scripts 
 
 `coffea-workflow` requires coffea `2026.7.0` or newer, which exposes `use_result_type=True` on `processor.Runner`, enabling the `Ok`/`Err` result-type pattern used by the fault-tolerance mechanism. It is installed automatically as a dependency.
 
-<!-- TODO: once coffea-workflow is on PyPI, replace the block below with: pip install coffea-workflow -->
-
-### Install coffea-workflow
-
 ```bash
-git clone https://github.com/CoffeaTeam/coffea-workflow.git
-cd coffea-workflow-engine
-python -m pip install .
+pip install coffea-workflow
 ```
 
 ### Optional — histserv
