@@ -48,6 +48,37 @@ def build_executor(ec: "ExecutorConfig | None", facility: "FacilityBase | None" 
     return (facility or LocalFactory()).build(ec)
 
 
+def _validate_runner_params(runner_params: dict) -> None:
+    """
+    Declarative mode (Analysis.processor) always injects the executor and forces
+    use_result_type=True itself, so the chunk-merge logic can rely on a coffea Result.
+    Reject runner_params that would collide with those framework-controlled kwargs.
+    """
+    forbidden = {"use_result_type", "executor"} & set(runner_params or {})
+    if forbidden:
+        raise ValueError(
+            f"runner_params may not set {sorted(forbidden)} — coffea-workflow controls "
+            "these (use_result_type is always True; executor is injected from "
+            "RunConfig.executor_config/facility)."
+        )
+
+
+def _run_declarative(processor_ref, processor_params: dict, runner_params: dict, chunk_fileset, executor):
+    """
+    Declarative-mode counterpart to a user's run_analysis(fileset, executor) function:
+    build processor.Runner(executor=..., use_result_type=True, **runner_params) and call
+    it with processor_ref(**processor_params). Framework, not the user, owns the Runner.
+    """
+    from coffea.processor import Runner
+    processor_params = processor_params or {}
+    runner_params = runner_params or {}
+    _validate_runner_params(runner_params)
+    proc_cls = _load_object(processor_ref)
+    proc = proc_cls(**processor_params)
+    runner = Runner(executor=executor, use_result_type=True, **runner_params)
+    return runner(chunk_fileset, proc)
+
+
 def _load_artifact_output(art, path):
     """
     Load the payload of any materialized artifact generically.

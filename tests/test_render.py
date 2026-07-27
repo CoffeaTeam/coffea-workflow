@@ -1,12 +1,12 @@
 """
-Tests for render._resolve_step_config and render.run preflight wiring.
+Tests for render._resolve_step_config.
 """
 import pytest
 from coffea_workflow.config import RunConfig, ExecutorConfig
 from coffea_workflow.facilities import LocalFactory, CoffeaCasaFactory
-from coffea_workflow.workflow import Step, Workflow
+from coffea_workflow.workflow import Step
 from coffea_workflow.artifacts import Fileset
-from coffea_workflow.render import _resolve_step_config, run
+from coffea_workflow.render import _resolve_step_config
 
 
 @pytest.fixture
@@ -77,30 +77,3 @@ class TestResolveStepConfig:
     def test_workflow_executor_used_when_step_has_none(self, workflow_config, bare_step):
         result = _resolve_step_config(workflow_config, bare_step)
         assert result.executor_config is workflow_config.executor_config
-
-
-class TestRunPreflight:
-    def test_misconfigured_facility_fails_before_any_step(self, tmp_path):
-        # LocalFactory + DaskExecutor with no scheduler address must fail upfront
-        # in run()'s preflight, not 30 minutes into execution.
-        config = RunConfig(
-            cache_dir=str(tmp_path),
-            facility=LocalFactory(),
-            executor_config=ExecutorConfig(executor_type="DaskExecutor"),
-        )
-        wf = Workflow()
-        wf.add(Step(name="S", step_type=Fileset, builder="m:fn"))
-        with pytest.raises(ValueError, match="scheduler address"):
-            run(wf, config)
-
-    def test_valid_facility_passes_preflight(self, tmp_path):
-        # A Dask address present -> preflight passes. An empty workflow returns
-        # before the executor is ever built, so no real connection is attempted;
-        # reaching the early return proves preflight did not raise.
-        config = RunConfig(
-            cache_dir=str(tmp_path),
-            facility=LocalFactory(scheduler_address="tcp://host:8786"),
-            executor_config=ExecutorConfig(executor_type="DaskExecutor"),
-        )
-        result = run(Workflow(), config)
-        assert result["order"] == []

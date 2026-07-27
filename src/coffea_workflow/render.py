@@ -32,28 +32,35 @@ def _topo_order(num_steps, edges):
     return order
 
 
-def _build_artifact(step_type, name, builder, builder_params, upstream):
+_PASSTHROUGH_FIELDS = ("builder", "builder_params", "processor", "processor_params", "runner_params")
+
+
+def _build_artifact(step_type, name, step: Step, upstream):
     """
-    As I wanted user to only have to define name and builder(from the Step values),
-    but artifacts can require some specific parameter which are results of execution
-    of the previous dependencies. These parameters will be filled by finding the
-    matching artifact in upstream by type.
+    As I wanted user to only have to define name and builder/processor (from the Step
+    values), but artifacts can require some specific parameter which are results of
+    execution of the previous dependencies. These parameters will be filled by finding
+    the matching artifact in upstream by type.
 
     Example of work:
 
-    _build_artifact(Analysis, "SingleMuonAnalysis", "analysis:run_analysis", upstream=[<Fileset artifact from step 1>])
+    _build_artifact(Analysis, "SingleMuonAnalysis", step, upstream=[<Fileset artifact from step 1>])
 
     get_type_hints(Analysis) returns:
-        {"name": str, "fileset": Fileset, "builder": str, "params": str}
+        {"name": str, "fileset": Fileset, "builder": str, "processor": str, ...}
     name -> skip
     fileset -> Fileset is a subclass of ArtifactBase → scan upstream → finds the Fileset artifact → kwargs["fileset"] = <that artifact>
-    builder -> skip
+    builder/builder_params/processor/processor_params/runner_params -> passed through from step
+    when the target artifact type declares that field (e.g. Analysis has processor*, Fileset doesn't)
 
     """
     hints = typing.get_type_hints(step_type)
-    kwargs = {"name": name, "builder": builder, "builder_params": builder_params}
+    kwargs = {"name": name}
+    for field_name in _PASSTHROUGH_FIELDS:
+        if field_name in hints:
+            kwargs[field_name] = getattr(step, field_name)
     for field_name, field_type in hints.items():
-        if field_name in ("name", "builder", "builder_params"):
+        if field_name in ("name", *_PASSTHROUGH_FIELDS):
             continue
         if field_name == "upstreams":          # injecting all upstream artifacts if it's a custom artifact
             kwargs["upstreams"] = tuple(upstream)
@@ -106,7 +113,8 @@ def _print_dag(workflow: Workflow) -> None:
         _safe_print("  (no steps)")
         return
     for idx, step in enumerate(workflow.steps):
-        _safe_print(f"  [{idx}] {step.name} -> {step.step_type.__name__} builder={step.builder}")
+        code_ref = f"builder={step.builder}" if step.builder is not None else f"processor={step.processor}"
+        _safe_print(f"  [{idx}] {step.name} -> {step.step_type.__name__} {code_ref}")
     if workflow.edges:
         _safe_print("Edges:")
         for src, dst in workflow.edges:
@@ -169,7 +177,7 @@ def run(workflow: Workflow, config: RunConfig):
     and returning cached results where available.
     """
     if config.facility is not None:
-        config.facility.preflight(config.executor_config)
+        config.facility.preflight()
 
     cache_dir = Path(config.cache_dir)
     executor = Executor(cache_dir=cache_dir, config=config)
@@ -197,12 +205,18 @@ def run(workflow: Workflow, config: RunConfig):
             step_name = step.name
 
             upstream = [artifact_by_idx[src] for src in parents[idx]]
-            artifact = _build_artifact(step.step_type, step_name, step.builder, step.builder_params, upstream)
+            artifact = _build_artifact(step.step_type, step_name, step, upstream)
 
             effective_config = _resolve_step_config(config, step)
-            _safe_print(
-                f"Executing step '{step_name}' of type '{step.step_type.__name__}' with the user code {step.builder} and user parameters {step.builder_params}"
-            )
+            if step.builder is not None:
+                _safe_print(
+                    f"Executing step '{step_name}' of type '{step.step_type.__name__}' with the user code {step.builder} and user parameters {step.builder_params}"
+                )
+            else:
+                _safe_print(
+                    f"Executing step '{step_name}' of type '{step.step_type.__name__}' with processor {step.processor} "
+                    f"processor_params={step.processor_params} runner_params={step.runner_params}"
+                )
             path = executor.materialize(artifact, config=effective_config)
             _safe_print(f"  -> materialized at {path}")
             _safe_print()

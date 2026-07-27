@@ -25,11 +25,22 @@ class Step:
 
     Analysis parameters (strategy, percentage, datasets, chunk_fraction) and cache_dir
     are always taken from the workflow-level RunConfig and cannot be overridden per step.
+
+    For step_type=Analysis, set exactly one of:
+        builder — 'module:function' (or callable) that drives its own coffea Runner
+        processor — 'module:Class' (or class) naming a ProcessorABC subclass; the
+            framework builds and calls the Runner (processor_params construct the
+            Processor, runner_params pass through to Runner()). See Analysis's
+            docstring in artifacts.py for details.
+    Other step_types (Fileset, Plotting, CustomArtifact) only use builder/builder_params.
     """
     name: str
     step_type: Type
-    builder: str | Callable
+    builder: str | Callable | None = None
     builder_params: dict | None = None
+    processor: "str | Callable | None" = None
+    processor_params: dict | None = None
+    runner_params: dict | None = None
     facility: "FacilityConfig | None" = None
     executor_config: "ExecutorConfig | None" = None
     input:  str | None = None
@@ -46,8 +57,11 @@ class Step:
         return {
             "name": self.name,
             "step_type": self.step_type.__name__,
-            "builder": _builder_key(self.builder),
+            "builder": _builder_key(self.builder) if self.builder is not None else None,
             "builder_params": dict(self.builder_params) if self.builder_params else None,
+            "processor": _builder_key(self.processor) if self.processor is not None else None,
+            "processor_params": dict(self.processor_params) if self.processor_params else None,
+            "runner_params": dict(self.runner_params) if self.runner_params else None,
             "facility": self.facility.name if self.facility else None,
             "executor_config": self.executor_config.executor_type if self.executor_config else None,
             "input":  self._resolved_input(),
