@@ -110,11 +110,78 @@ class Fileset(ArtifactBase):
 
 @register_artifact
 @dataclass(frozen=True)
+class Preprocessed(ArtifactBase):
+    """
+    External artifact. Preprocesses the upstream fileset into a list of coffea
+    WorkItems: every file is opened once to read its entry count and uuid, an
+    optional custom_builder(uproot_file) -> dict adds per-file metadata (e.g.
+    sum-of-weights bookkeeping), and each file is cut into step_size-event
+    ranges. An optional aggregate_builder(workitems) then runs once over the
+    full list for cross-file bookkeeping (e.g. dataset-level sumw totals);
+    it may mutate the items' usermeta in place or return a new list.
+
+    Insert it between a Fileset and an Analysis to switch that Analysis to
+    event-level splitting:
+
+        Analysis(fileset=Preprocessed(name="pp", fileset=fs, step_size=100_000), ...)
+
+    or as its own Step in the Workflow DSL. Downstream, Chunking splits the
+    WorkItem list with the usual strategy/percentage semantics, and each chunk
+    goes to coffea's Runner as a premade WorkItem list — Runner dispatches one
+    executor task per WorkItem and skips its own chunksize-based chunking
+    (the Runner's chunksize is ignored in this mode; step_size is the task
+    granularity).
+
+    Opening every file is the expensive part; as a cached artifact it only
+    reruns when the fileset, step_size, treename or either builder changes.
+
+    Its producer writes:
+        .cache/Preprocessed/<identity>/workitems.json
+    """
+    input_type  = "fileset_dict"
+    output_type = "workitems"
+
+    name: str
+    fileset: ArtifactBase
+    step_size: int
+    treename: str | None = None
+    custom_builder: str | Callable | None = None
+    aggregate_builder: str | Callable | None = None
+
+    def __post_init__(self):
+        if not isinstance(self.step_size, int) or isinstance(self.step_size, bool):
+            raise TypeError("step_size must be an int")
+        if self.step_size < 1:
+            raise ValueError("step_size must be >= 1")
+        if self.treename is not None and not isinstance(self.treename, str):
+            raise TypeError("treename must be a string")
+        for field_name in ("custom_builder", "aggregate_builder"):
+            value = getattr(self, field_name)
+            if value is not None and not (isinstance(value, str) or callable(value)):
+                raise TypeError(
+                    f"{field_name} must be a 'module:function' string or a callable"
+                )
+
+    def keys(self):
+        return {
+            "name": self.name,
+            "fileset": self.fileset,
+            "step_size": self.step_size,
+            "treename": self.treename,
+            "custom_builder": _builder_key(self.custom_builder) if self.custom_builder is not None else None,
+            "aggregate_builder": _builder_key(self.aggregate_builder) if self.aggregate_builder is not None else None,
+        }
+
+
+@register_artifact
+@dataclass(frozen=True)
 class Chunking(ArtifactBase):
     """
     Internal artifact. User doesn't use this artifact, it's a helping artifact that is
     produced by Analysis artifact(external) to execute splitting strategy.
-    Returns fileset chunks based on splitting strategy.
+    Returns fileset chunks based on splitting strategy. When the upstream artifact
+    is Preprocessed, the chunks are lists of WorkItem records (workitems_chunk_N.json)
+    instead of partial fileset dicts.
     Its producer writes:
         .cache/Chunking/<identity>/
             manifest.json
@@ -200,7 +267,8 @@ class Analysis(ArtifactBase):
         to processor.Runner(**runner_params). The framework always injects the
         executor and forces use_result_type=True.
     """
-    input_type  = "fileset_dict"
+    # accepts either a plain fileset dict or a Preprocessed WorkItem list
+    input_type  = "fileset_dict|workitems"
     output_type = "analysis_payload"
 
     name: str

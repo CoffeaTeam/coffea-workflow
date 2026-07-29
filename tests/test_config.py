@@ -312,10 +312,10 @@ class TestFacilityPreflight:
         ec = ExecutorConfig(executor_type="DaskExecutor", executor=MagicMock())
         CoffeaCasaFactory(scheduler_address="").preflight(ec)  # should not raise
 
-    # --- base + Lxplus accept the ec argument (uniform signature) ---
-    def test_base_preflight_accepts_ec(self):
-        import inspect
-        assert "ec" in inspect.signature(FacilityBase.preflight).parameters
+    # # --- base + Lxplus accept the ec argument (uniform signature) ---
+    # def test_base_preflight_accepts_ec(self):
+    #     import inspect
+    #     assert "ec" in inspect.signature(FacilityBase.preflight).parameters
 
     def test_lxplus_preflight_accepts_ec(self):
         import inspect

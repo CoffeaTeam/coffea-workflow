@@ -4,7 +4,7 @@ import typing
 import cloudpickle
 from .config import RunConfig
 from .workflow import Workflow, Step
-from .artifacts import ArtifactBase, Fileset, Analysis, Plotting, CustomArtifact
+from .artifacts import ArtifactBase, Fileset, Preprocessed, Analysis, Plotting, CustomArtifact
 from pathlib import Path
 from .executor import Executor
 from .producers_utils import _safe_print
@@ -32,7 +32,10 @@ def _topo_order(num_steps, edges):
     return order
 
 
-_PASSTHROUGH_FIELDS = ("builder", "builder_params", "processor", "processor_params", "runner_params")
+_PASSTHROUGH_FIELDS = (
+    "builder", "builder_params", "processor", "processor_params", "runner_params",
+    "step_size", "treename", "custom_builder", "aggregate_builder",
+)
 
 
 def _build_artifact(step_type, name, step: Step, upstream):
@@ -79,6 +82,8 @@ def _build_artifact(step_type, name, step: Step, upstream):
 def _load_step_result(step_type, path: Path):
     if step_type is Fileset:
         return json.loads((path / "fileset.json").read_text())
+    if step_type is Preprocessed:
+        return json.loads((path / "workitems.json").read_text())
     if step_type is Analysis:
         return cloudpickle.loads((path / "payload.pkl").read_bytes())
     if step_type is Plotting:
@@ -113,7 +118,14 @@ def _print_dag(workflow: Workflow) -> None:
         _safe_print("  (no steps)")
         return
     for idx, step in enumerate(workflow.steps):
-        code_ref = f"builder={step.builder}" if step.builder is not None else f"processor={step.processor}"
+        if step.builder is not None:
+            code_ref = f"builder={step.builder}"
+        elif step.processor is not None:
+            code_ref = f"processor={step.processor}"
+        elif step.step_size is not None:
+            code_ref = f"step_size={step.step_size}"
+        else:
+            code_ref = ""
         _safe_print(f"  [{idx}] {step.name} -> {step.step_type.__name__} {code_ref}")
     if workflow.edges:
         _safe_print("Edges:")
@@ -212,10 +224,16 @@ def run(workflow: Workflow, config: RunConfig):
                 _safe_print(
                     f"Executing step '{step_name}' of type '{step.step_type.__name__}' with the user code {step.builder} and user parameters {step.builder_params}"
                 )
-            else:
+            elif step.processor is not None:
                 _safe_print(
                     f"Executing step '{step_name}' of type '{step.step_type.__name__}' with processor {step.processor} "
                     f"processor_params={step.processor_params} runner_params={step.runner_params}"
+                )
+            else:
+                _safe_print(
+                    f"Executing step '{step_name}' of type '{step.step_type.__name__}' "
+                    f"(step_size={step.step_size}, custom_builder={step.custom_builder}, "
+                    f"aggregate_builder={step.aggregate_builder})"
                 )
             path = executor.materialize(artifact, config=effective_config)
             _safe_print(f"  -> materialized at {path}")

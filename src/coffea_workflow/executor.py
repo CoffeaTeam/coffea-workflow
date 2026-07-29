@@ -58,6 +58,7 @@ class Executor:
 
     _EXPECTED = {
         "Fileset": "fileset.json",
+        "Preprocessed": "workitems.json",
         "Chunking": "manifest.json",
         "ChunkAnalysis": ".success",
         "Analysis": "payload.pkl",

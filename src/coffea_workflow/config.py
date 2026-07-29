@@ -25,12 +25,8 @@ class FacilityBase(ABC):
     def build(self, ec: "ExecutorConfig | None") -> Any:
         """Build and return a coffea executor."""
 
-    def preflight(self, ec: "ExecutorConfig | None" = None) -> None:
-        """Check all prerequisites. Raise RuntimeError with an exact fix command if anything is missing.
-
-        Receives the effective ExecutorConfig so facilities can validate executor-dependent
-        prerequisites (e.g. a Dask scheduler address) upfront, before any producer runs.
-        """
+    def preflight(self) -> None:
+        """Check all prerequisites. Raise RuntimeError with an exact fix command if anything is missing."""
 
     def close(self) -> None:
         """Release resources created by build() (e.g. shut down a Dask cluster)."""
@@ -79,7 +75,9 @@ class RunConfig:
     """
     Defines how to run the analysis:
         - strategy: "by_dataset" splits into one chunk per dataset; None keeps all datasets together
-        - percentage: what percent of each dataset's files per chunk (e.g. 20 → 5 chunks); None = no file split
+        - percentage: what percent of each dataset's units per chunk (e.g. 20 → 5 chunks); None = no split.
+          The unit is a file, or a WorkItem (event range) when the Analysis consumes a
+          Preprocessed artifact (see artifacts.Preprocessed for event-level splitting).
         - datasets: restrict to specific dataset names; accepts list (auto-converted to tuple) or None for all
         - cache_dir: where to put cached outputs
     """

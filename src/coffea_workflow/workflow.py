@@ -33,6 +33,13 @@ class Step:
             Processor, runner_params pass through to Runner()). See Analysis's
             docstring in artifacts.py for details.
     Other step_types (Fileset, Plotting, CustomArtifact) only use builder/builder_params.
+
+    For step_type=Preprocessed (event-level splitting; see artifacts.Preprocessed):
+        step_size — events per WorkItem (required)
+        treename — fallback TTree name for list-format files
+        custom_builder — optional per-file metadata extractor: fn(uproot_file) -> dict
+        aggregate_builder — optional cross-file hook: fn(workitems) run once after
+            preprocessing (e.g. dataset-level sum-of-weights totals)
     """
     name: str
     step_type: Type
@@ -41,6 +48,10 @@ class Step:
     processor: "str | Callable | None" = None
     processor_params: dict | None = None
     runner_params: dict | None = None
+    step_size: int | None = None
+    treename: str | None = None
+    custom_builder: "str | Callable | None" = None
+    aggregate_builder: "str | Callable | None" = None
     facility: "FacilityConfig | None" = None
     executor_config: "ExecutorConfig | None" = None
     input:  str | None = None
@@ -62,6 +73,10 @@ class Step:
             "processor": _builder_key(self.processor) if self.processor is not None else None,
             "processor_params": dict(self.processor_params) if self.processor_params else None,
             "runner_params": dict(self.runner_params) if self.runner_params else None,
+            "step_size": self.step_size,
+            "treename": self.treename,
+            "custom_builder": _builder_key(self.custom_builder) if self.custom_builder is not None else None,
+            "aggregate_builder": _builder_key(self.aggregate_builder) if self.aggregate_builder is not None else None,
             "facility": self.facility.name if self.facility else None,
             "executor_config": self.executor_config.executor_type if self.executor_config else None,
             "input":  self._resolved_input(),
@@ -81,10 +96,12 @@ class Workflow:
 
         step_in = step._resolved_input()
         if step_in not in ("any", "none"):
+            # input_type may be a union like "fileset_dict|workitems"
+            allowed = set(step_in.split("|"))
             for di in dep_idxs:
                 dep = self.steps[di]
                 dep_out = dep._resolved_output()
-                if dep_out != "any" and dep_out != step_in:
+                if dep_out != "any" and dep_out not in allowed:
                     raise TypeError(
                         f"Step '{step.name}' ({step.step_type.__name__}) expects input "
                         f"'{step_in}', but '{dep.name}' ({dep.step_type.__name__}) "

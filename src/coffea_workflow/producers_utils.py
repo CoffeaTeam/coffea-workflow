@@ -86,6 +86,9 @@ def _load_artifact_output(art, path):
     if art.type_name == "Fileset":
         import json
         return json.loads((path / "fileset.json").read_text())
+    if art.type_name == "Preprocessed":
+        import json
+        return json.loads((path / "workitems.json").read_text())
     payload_path = path / "payload.pkl"
     if payload_path.exists():
         import cloudpickle
