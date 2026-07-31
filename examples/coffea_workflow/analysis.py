@@ -2,7 +2,6 @@ import numpy as np
 import hist
 import coffea.processor as processor
 import awkward as ak
-from coffea.nanoevents import schemas
 
 def get_fileset(to_print=None):
     if to_print:
@@ -63,12 +62,6 @@ class Processor(processor.ProcessorABC):
     
     def postprocess(self, accumulator):
         pass
-
-def run_analysis(fileset, executor=None):
-    run = processor.Runner(executor=executor, schema=schemas.NanoAODSchema, savemetrics=False, skipbadfiles=True,
-                        use_result_type=True)
-    result = run(fileset, Processor())
-    return result
 
 def plot_results(result):
     print(f"Result keys: {list(result.keys())}")
