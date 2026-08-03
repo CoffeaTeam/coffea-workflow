@@ -8,6 +8,7 @@ from .artifacts import ArtifactBase, Fileset, Analysis, Plotting, CustomArtifact
 from pathlib import Path
 from .executor import Executor
 from .producers_utils import _safe_print
+from .histserv_utils import resolve_histserv_connection
 
 
 def _topo_order(num_steps, edges):
@@ -208,6 +209,21 @@ def run(workflow: Workflow, config: RunConfig):
             artifact = _build_artifact(step.step_type, step_name, step, upstream)
 
             effective_config = _resolve_step_config(config, step)
+
+            if step.step_type is Analysis and effective_config.hist_client is not None:
+                connection_info = resolve_histserv_connection(
+                    hist_client=effective_config.hist_client,
+                    hist_template=effective_config.hist_template,
+                    histserv_token=effective_config.histserv_token,
+                    provided_connection_info=effective_config.histserv_connection_info,
+                    out_dir=executor.path_for(artifact),
+                )
+                effective_config = dataclasses.replace(effective_config, histserv_connection_info=connection_info)
+                # Propagate to the workflow-level config (not just this step's effective_config)
+                # so downstream steps (e.g. Plotting) resolve against the same connection —
+                # a per-step facility/executor_config override, if any, must NOT leak forward.
+                config = dataclasses.replace(config, histserv_connection_info=connection_info)
+
             if step.builder is not None:
                 _safe_print(
                     f"Executing step '{step_name}' of type '{step.step_type.__name__}' with the user code {step.builder} and user parameters {step.builder_params}"
