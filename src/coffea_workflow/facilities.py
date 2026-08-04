@@ -251,8 +251,33 @@ class CoffeaCasaFactory(FacilityBase):
         _safe_print("Connecting to Dask scheduler...")
         from coffea.processor import DaskExecutor
         from dask.distributed import Client, PipInstall
+        from distributed.diagnostics.plugin import WorkerPlugin
 
         client = Client(self.scheduler_address)
+
+        class _ZipSysPathPlugin(WorkerPlugin):
+            """
+            Make a zipped package importable on every worker (current and future) by
+            writing the zip into the worker's local dir and prepending it to sys.path.
+
+            Used instead of client.upload_file(zip, load=True): load=True eagerly walks
+            the zip with pkgutil.iter_modules(), which crashes on coffea-casa / condor
+            scratch paths (KeyError in zipimport._zip_directory_cache). We only need the
+            zip on sys.path for lazy `import <pkg>`, not an eager import of every module.
+            """
+            def __init__(self, name, zip_name, data):
+                self.name = name
+                self.zip_name = zip_name
+                self.data = data
+
+            def setup(self, worker):
+                import os
+                import sys
+                dest = os.path.join(worker.local_directory, self.zip_name)
+                with open(dest, "wb") as fh:
+                    fh.write(self.data)
+                if dest not in sys.path:
+                    sys.path.insert(0, dest)
         
         # Upload files before installing packages
         files = (ec.worker_files if ec else ()) or self.worker_files
@@ -269,9 +294,13 @@ class CoffeaCasaFactory(FacilityBase):
                     root_dir=str(folder.parent.resolve()),
                     base_dir=folder.name,
                 )
-                # load=True is required for zips: Dask must add the zip itself to
-                # sys.path so Python's zipimport can find the package inside it.
-                client.upload_file(zip_path, load=True)
+                # Ship the zip via a WorkerPlugin (see _ZipSysPathPlugin) instead of
+                # client.upload_file(zip_path, load=True), whose eager import step crashes
+                # on coffea-casa / condor workers.
+                zip_name = Path(zip_path).name
+                client.register_plugin(_ZipSysPathPlugin(
+                    f"coffea-workflow-zip-{zip_name}", zip_name, Path(zip_path).read_bytes()
+                ))
                 _safe_print(f"Uploaded {folder.name}/ as {folder.name}.zip to workers")
 
         packages = list((ec.worker_packages if ec else ()) or self.worker_packages)
