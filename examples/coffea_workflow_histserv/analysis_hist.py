@@ -66,7 +66,7 @@ def hist_template():
     return hist.Hist(dataset_axis, MET_axis)
 
 # Analysis function should accept config parameter to be able to read histserv configs
-def run_analysis(fileset, config):
+def run_analysis(fileset, config, executor):
     # extract client and connection information
     hist_client = config.hist_client
     conn = config.histserv_connection_info
@@ -77,7 +77,7 @@ def run_analysis(fileset, config):
     print(f"Reconnected to histserv: {remote_hist.get_connection_info()}")
 
     # run the processor
-    executor_inst = processor.FuturesExecutor()
+    executor_inst = executor
     run = processor.Runner(executor=executor_inst, schema=schemas.NanoAODSchema,
                            savemetrics=True, skipbadfiles=True, use_result_type=True)
     proc = Processor(remote_hist=remote_hist)
