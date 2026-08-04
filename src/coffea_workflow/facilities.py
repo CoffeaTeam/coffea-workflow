@@ -154,6 +154,20 @@ class LocalFactory(FacilityBase):
     workers: int = 4
     scheduler_address: str | None = None
 
+    def preflight(self, ec: ExecutorConfig | None = None) -> None:
+        # A custom executor object needs no facility-level prerequisites.
+        if ec is not None and ec.executor is not None:
+            return
+        executor_type = ec.executor_type if ec is not None else "FuturesExecutor"
+        if executor_type == "DaskExecutor" and not self._dask_address(ec):
+            raise ValueError(
+                "LocalFactory with DaskExecutor requires a scheduler address.\n"
+                "Set scheduler_address= on LocalFactory or dask_scheduler= on ExecutorConfig."
+            )
+
+    def _dask_address(self, ec: ExecutorConfig | None) -> str | None:
+        return (ec.dask_scheduler if ec else None) or self.scheduler_address
+
     def build(self, ec: ExecutorConfig | None) -> Any:
         from coffea.processor import IterativeExecutor, FuturesExecutor, DaskExecutor
 
@@ -170,14 +184,9 @@ class LocalFactory(FacilityBase):
             return FuturesExecutor(workers=n)
 
         if executor_type == "DaskExecutor":
-            addr = (ec.dask_scheduler if ec else None) or self.scheduler_address
-            if not addr:
-                raise ValueError(
-                    "LocalFactory with DaskExecutor requires a scheduler address.\n"
-                    "Set scheduler_address= on LocalFactory or dask_scheduler= on ExecutorConfig."
-                )
+            self.preflight(ec)  # single source of truth for the address check
             from dask.distributed import Client
-            client = Client(addr)
+            client = Client(self._dask_address(ec))
             return DaskExecutor(client=client)
 
         raise ValueError(f"Unsupported executor_type: {executor_type!r}")
@@ -186,6 +195,38 @@ class LocalFactory(FacilityBase):
 # ---------------------------------------------------------------------------
 # CoffeaCasaFactory
 # ---------------------------------------------------------------------------
+
+def _zip_syspath_plugin(zip_path: str):
+    """
+    Dask WorkerPlugin that makes a zipped package importable on every worker (current
+    and future): writes the zip into the worker's local dir and prepends it to sys.path.
+    Imported lazily so the distributed plugin API is only needed when a worker_files
+    entry is actually a directory.
+
+    Used instead of client.upload_file(zip, load=True), whose eager pkgutil.iter_modules()
+    walk crashes on coffea-casa / condor scratch paths (KeyError in zipimport cache).
+    """
+    from dask.distributed import WorkerPlugin
+
+    class _ZipSysPathPlugin(WorkerPlugin):
+        def __init__(self, name, zip_name, data):
+            self.name = name
+            self.zip_name = zip_name
+            self.data = data
+
+        def setup(self, worker):
+            import os, sys
+            dest = os.path.join(worker.local_directory, self.zip_name)
+            with open(dest, "wb") as fh:
+                fh.write(self.data)
+            if dest not in sys.path:
+                sys.path.insert(0, dest)
+
+    zip_name = Path(zip_path).name
+    return _ZipSysPathPlugin(
+        f"coffea-workflow-zip-{zip_name}", zip_name, Path(zip_path).read_bytes()
+    )
+
 
 @dataclass
 class CoffeaCasaFactory(FacilityBase):
@@ -206,6 +247,17 @@ class CoffeaCasaFactory(FacilityBase):
     def __post_init__(self):
         self.worker_packages = tuple(self.worker_packages)
         self.worker_files = tuple(self.worker_files)
+
+    def preflight(self, ec: ExecutorConfig | None = None) -> None:
+        # A custom executor object needs no facility-level prerequisites.
+        if ec is not None and ec.executor is not None:
+            return
+        executor_type = ec.executor_type if ec is not None else "DaskExecutor"
+        if executor_type == "DaskExecutor" and not self.scheduler_address:
+            raise ValueError(
+                "CoffeaCasaFactory with DaskExecutor requires a scheduler address.\n"
+                "Set scheduler_address= on CoffeaCasaFactory."
+            )
 
     def build(self, ec: ExecutorConfig | None) -> Any:
         from coffea.processor import IterativeExecutor, FuturesExecutor, DaskExecutor
@@ -249,9 +301,12 @@ class CoffeaCasaFactory(FacilityBase):
                     root_dir=str(folder.parent.resolve()),
                     base_dir=folder.name,
                 )
-                # load=True is required for zips: Dask must add the zip itself to
-                # sys.path so Python's zipimport can find the package inside it.
-                client.upload_file(zip_path, load=True)
+                # Ship the zip via a WorkerPlugin (see _ZipSysPathPlugin) instead of
+                # client.upload_file(zip_path, load=True), whose eager import step crashes
+                # on coffea-casa / condor workers.
+                zip_name = Path(zip_path).name
+                client.register_plugin(_zip_syspath_plugin(zip_path))
+
                 _safe_print(f"Uploaded {folder.name}/ as {folder.name}.zip to workers")
 
         packages = list((ec.worker_packages if ec else ()) or self.worker_packages)
@@ -307,7 +362,7 @@ class LxplusFactory(FacilityBase):
         self.extra_pythonpath = tuple(self.extra_pythonpath)
         self._cluster = None
 
-    def preflight(self) -> None:
+    def preflight(self, ec: ExecutorConfig | None = None) -> None:
         hostname = socket.gethostname()
 
         if "lxplus" not in hostname:

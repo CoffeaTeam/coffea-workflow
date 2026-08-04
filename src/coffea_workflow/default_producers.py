@@ -9,7 +9,10 @@ from .producers import producer
 from .config import RunConfig
 from coffea.processor import accumulate
 from coffea.dataset_tools.splitting import hash_fileset
-from .producers_utils import _call_builder, _extract_acc, _load_object, _split_fileset, _load_artifact_output, _safe_print
+from .producers_utils import (
+    _call_builder, _extract_acc, _load_object, _split_fileset, _load_artifact_output,
+    _safe_print, _run_declarative, _validate_runner_params,
+)
 
 @producer(Fileset)
 def make_fileset(*, art: Fileset, deps: Deps, out: Path, config: RunConfig) -> None:
@@ -69,10 +72,16 @@ def run_analysis(*, art: ChunkAnalysis, deps: Deps, out: Path, config: RunConfig
     chunk_path = chunking_dir / art.chunk_file
     chunk_fileset = json.loads(chunk_path.read_text())
 
-    fn = _load_object(art.analysis_builder)  # user's function
     executor = deps.coffea_executor()
-    result = _call_builder(fn, chunk_fileset, config=config, executor=executor,
-                           builder_params=dict(art.builder_params))
+    if art.processor is not None:
+        result = _run_declarative(
+            art.processor, dict(art.processor_params), dict(art.runner_params),
+            chunk_fileset, executor,
+        )
+    else:
+        fn = _load_object(art.analysis_builder)  # user's function
+        result = _call_builder(fn, chunk_fileset, config=config, executor=executor,
+                               builder_params=dict(art.builder_params))
 
     (out / "payload.pkl").write_bytes(cloudpickle.dumps(result))
     if result.is_ok():
@@ -112,6 +121,28 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
     metrics_merged = None
     failures = []
 
+    is_declarative = art.processor is not None
+    if is_declarative:
+        _validate_runner_params(dict(art.runner_params))
+
+    def _make_chunk_artifact(entry):
+        if is_declarative:
+            return ChunkAnalysis(
+                chunk_file=entry["file"],
+                chunk_hash=entry["hash"],
+                chunking=chunking,
+                processor=art.processor,
+                processor_params=art.processor_params,
+                runner_params=art.runner_params,
+            )
+        return ChunkAnalysis(
+            chunk_file=entry["file"],
+            chunk_hash=entry["hash"],
+            chunking=chunking,
+            analysis_builder=art.builder,
+            builder_params=art.builder_params,
+        )
+
     coffea_exec = deps.coffea_executor()
     wants_parallel = config.executor_config is not None and config.executor_config.parallel_chunks
     if wants_parallel and not hasattr(coffea_exec, "client"):
@@ -128,7 +159,7 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
     use_parallel = wants_parallel
 
     if use_parallel:
-        # Defined as a nested function so cloudpickle serializes it as bytecode,
+        # Defined as nested functions so cloudpickle serializes them as bytecode,
         # not as a module reference — the scheduler/workers don't have coffea_workflow installed.
         def _run_chunk_remote(chunk_fileset, builder_bytes, builder_params):
             """
@@ -164,21 +195,44 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
                         kwargs[k] = v
             return cloudpickle.dumps(fn(chunk_fileset, **kwargs))
 
+        def _run_chunk_remote_declarative(chunk_fileset, processor_bytes, processor_params, runner_params):
+            """
+            Declarative-mode counterpart to _run_chunk_remote: builds coffea's own Runner
+            directly from the (already-resolved-locally) Processor class bytes, so the
+            worker never needs coffea_workflow — only coffea.
+            """
+            import cloudpickle
+
+            try:
+                import hist as _hist
+                if not hasattr(_hist.Hist, "identity"):
+                    def _hist_identity(self):
+                        h = self.copy()
+                        h.reset()
+                        return h
+                    _hist.Hist.identity = _hist_identity
+            except ImportError:
+                pass
+
+            from coffea.processor import IterativeExecutor, Runner
+            proc_cls = cloudpickle.loads(processor_bytes)
+            proc = proc_cls(**(processor_params or {}))
+            runner = Runner(executor=IterativeExecutor(), use_result_type=True, **(runner_params or {}))
+            return cloudpickle.dumps(runner(chunk_fileset, proc))
+
         client = coffea_exec.client
-        fn = _load_object(art.builder)
-        builder_bytes = cloudpickle.dumps(fn)
-        builder_params = dict(art.builder_params)
+        if is_declarative:
+            proc_cls = _load_object(art.processor)
+            processor_bytes = cloudpickle.dumps(proc_cls)
+            processor_params = dict(art.processor_params)
+            runner_params = dict(art.runner_params)
+        else:
+            fn = _load_object(art.builder)
+            builder_bytes = cloudpickle.dumps(fn)
+            builder_params = dict(art.builder_params)
 
         # Build chunk artifacts, separate cached from uncached
-        chunk_arts = []
-        for entry in chunks_entries:
-            chunk_arts.append(ChunkAnalysis(
-                chunk_file=entry["file"],
-                chunk_hash=entry["hash"],
-                chunking=chunking,
-                analysis_builder=art.builder,
-                builder_params=art.builder_params,
-            ))
+        chunk_arts = [_make_chunk_artifact(entry) for entry in chunks_entries]
 
         uncached_indices = [
             i for i, ca in enumerate(chunk_arts)
@@ -191,7 +245,13 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
             for i in uncached_indices:
                 ca = chunk_arts[i]
                 chunk_fileset = json.loads((chunk_dir / ca.chunk_file).read_text())
-                futures[i] = client.submit(_run_chunk_remote, chunk_fileset, builder_bytes, builder_params)
+                if is_declarative:
+                    futures[i] = client.submit(
+                        _run_chunk_remote_declarative, chunk_fileset,
+                        processor_bytes, processor_params, runner_params,
+                    )
+                else:
+                    futures[i] = client.submit(_run_chunk_remote, chunk_fileset, builder_bytes, builder_params)
 
             # Client.gather has no asyncio-style return_exceptions; collect
             # per-future so a failed chunk yields its exception in place and
@@ -238,16 +298,9 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
     else:
         for entry in chunks_entries:
             chunk_file = entry["file"]
-            chunk_hash = entry["hash"]
             _safe_print("------------------------------------")
             _safe_print(f"Processing {chunk_file}")
-            chunk_art = ChunkAnalysis(
-                chunk_file=chunk_file,
-                chunk_hash=chunk_hash,
-                chunking=chunking,
-                analysis_builder=art.builder,
-                builder_params=art.builder_params,
-            )
+            chunk_art = _make_chunk_artifact(entry)
             # process chunk
             chunk_out_dir = deps.need(chunk_art)
             result = cloudpickle.loads((chunk_out_dir / "payload.pkl").read_bytes())
@@ -269,7 +322,8 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
                 continue
 
     payload = {
-        "builder": _builder_key(art.builder),
+        "builder": _builder_key(art.builder) if art.builder is not None else None,
+        "processor": _builder_key(art.processor) if art.processor is not None else None,
         "n_chunks_total": len(chunks_entries),
         "n_chunks_ok": 0 if merged_acc is None else (len(chunks_entries) - len(failures)),
         "failures": failures,

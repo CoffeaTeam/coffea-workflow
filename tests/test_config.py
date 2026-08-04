@@ -263,6 +263,67 @@ class TestCoffeaCasaFactory:
 
 
 # ---------------------------------------------------------------------------
+# preflight() — upfront validation before any producer runs
+# ---------------------------------------------------------------------------
+
+class TestFacilityPreflight:
+    # --- LocalFactory ---
+    def test_local_dask_without_address_raises(self):
+        ec = ExecutorConfig(executor_type="DaskExecutor")
+        with pytest.raises(ValueError, match="scheduler address"):
+            LocalFactory().preflight(ec)
+
+    def test_local_dask_with_address_on_ec_passes(self):
+        ec = ExecutorConfig(executor_type="DaskExecutor", dask_scheduler="tcp://host:8786")
+        LocalFactory().preflight(ec)  # should not raise
+
+    def test_local_dask_with_address_on_factory_passes(self):
+        ec = ExecutorConfig(executor_type="DaskExecutor")
+        LocalFactory(scheduler_address="tcp://host:8786").preflight(ec)  # should not raise
+
+    def test_local_futures_needs_no_address(self):
+        LocalFactory().preflight(ExecutorConfig(executor_type="FuturesExecutor"))
+
+    def test_local_no_ec_defaults_to_futures(self):
+        LocalFactory().preflight()  # default executor needs no scheduler
+
+    def test_local_custom_executor_short_circuits(self):
+        # A user-supplied executor object bypasses the address check entirely.
+        from unittest.mock import MagicMock
+        ec = ExecutorConfig(executor_type="DaskExecutor", executor=MagicMock())
+        LocalFactory().preflight(ec)  # should not raise despite no address
+
+    # --- CoffeaCasaFactory ---
+    def test_coffea_casa_default_address_passes(self):
+        CoffeaCasaFactory().preflight(ExecutorConfig(executor_type="DaskExecutor"))
+
+    def test_coffea_casa_empty_address_with_dask_raises(self):
+        ec = ExecutorConfig(executor_type="DaskExecutor")
+        with pytest.raises(ValueError, match="scheduler address"):
+            CoffeaCasaFactory(scheduler_address="").preflight(ec)
+
+    def test_coffea_casa_empty_address_with_futures_passes(self):
+        # Non-Dask executors don't need a scheduler, even with a blank address.
+        ec = ExecutorConfig(executor_type="FuturesExecutor")
+        CoffeaCasaFactory(scheduler_address="").preflight(ec)
+
+    def test_coffea_casa_custom_executor_short_circuits(self):
+        from unittest.mock import MagicMock
+        ec = ExecutorConfig(executor_type="DaskExecutor", executor=MagicMock())
+        CoffeaCasaFactory(scheduler_address="").preflight(ec)  # should not raise
+
+    # --- base + Lxplus accept the ec argument (uniform signature) ---
+    def test_base_preflight_accepts_ec(self):
+        import inspect
+        assert "ec" in inspect.signature(FacilityBase.preflight).parameters
+
+    def test_lxplus_preflight_accepts_ec(self):
+        import inspect
+        from coffea_workflow.facilities import LxplusFactory
+        assert "ec" in inspect.signature(LxplusFactory.preflight).parameters
+
+
+# ---------------------------------------------------------------------------
 # RunConfig.facility
 # ---------------------------------------------------------------------------
 

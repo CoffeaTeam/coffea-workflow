@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Callable, Literal, Optional
 from abc import ABC, abstractmethod
 
 SplitStrategy = Optional[Literal["by_dataset"]]
@@ -25,8 +25,12 @@ class FacilityBase(ABC):
     def build(self, ec: "ExecutorConfig | None") -> Any:
         """Build and return a coffea executor."""
 
-    def preflight(self) -> None:
-        """Check all prerequisites. Raise RuntimeError with an exact fix command if anything is missing."""
+    def preflight(self, ec: "ExecutorConfig | None" = None) -> None:
+        """Check all prerequisites. Raise RuntimeError with an exact fix command if anything is missing.
+
+        Receives the effective ExecutorConfig so facilities can validate executor-dependent
+        prerequisites (e.g. a Dask scheduler address) upfront, before any producer runs.
+        """
 
     def close(self) -> None:
         """Release resources created by build() (e.g. shut down a Dask cluster)."""
@@ -78,6 +82,15 @@ class RunConfig:
         - percentage: what percent of each dataset's files per chunk (e.g. 20 → 5 chunks); None = no file split
         - datasets: restrict to specific dataset names; accepts list (auto-converted to tuple) or None for all
         - cache_dir: where to put cached outputs
+        - hist_client: a histserv.Client to stream histograms to instead of merging locally
+        - hist_template: 'module:function' (or callable) with no args returning the local
+          hist.Hist/ChunkedHist to register on the server. Required when hist_client is set —
+          the framework calls it to create the histogram on first use, and again to create a
+          replacement if a previous connection is found to have expired on a later run.
+        - histserv_token: optional access token used when (re)creating a histogram
+        - histserv_connection_info: manual override pointing at an existing server-side
+          histogram. Normally left None — the framework tracks and reconnects to the right
+          histogram automatically per Analysis artifact identity (see histserv_utils.py).
     """
     strategy: SplitStrategy = None
     percentage: int | None = None
@@ -85,6 +98,8 @@ class RunConfig:
     chunk_fraction: float | None = None
     cache_dir: Path = Path(".cache")
     hist_client: Any | None = None
+    hist_template: "str | Callable | None" = None
+    histserv_token: str | None = None
     histserv_connection_info: dict | None = None
     executor_config: ExecutorConfig | None = None
     facility: FacilityBase | None = None
@@ -104,10 +119,18 @@ class RunConfig:
                 raise ValueError(
                     "percentage must divide 100 evenly (e.g. 10, 20, 25, 50)."
                 )
-            
+
         if isinstance(self.datasets, list):
             object.__setattr__(self, "datasets", tuple(self.datasets))
 
         if self.chunk_fraction is not None:
             if not isinstance(self.chunk_fraction, float) or not (0.0 < self.chunk_fraction <= 1.0):
                 raise ValueError("chunk_fraction must be a float in (0.0, 1.0]")
+
+        if self.hist_client is not None and self.hist_template is None:
+            raise ValueError(
+                "hist_client is set but hist_template is None. hist_template must be a "
+                "'module:function' (or callable) returning the local hist.Hist/ChunkedHist "
+                "to register — the framework needs it to (re)create the server-side "
+                "histogram, on first use and if a later run finds the connection expired."
+            )

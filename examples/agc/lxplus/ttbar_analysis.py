@@ -1,12 +1,20 @@
 """
-AGC cms ttbar example without ServiceX.
+AGC CMS ttbar analysis restructured for coffea-workflow.
+
+Three plain functions are all the workflow needs:
+    get_fileset(with_failure, n_files_max_per_sample)         -> fileset dict          (Fileset step)
+    run_analysis(fileset, executor, use_inference, use_triton) -> Ok/Err coffea result (Analysis step)
+    plotting_1(result)                                         -> None                 (Plotting step)
+
+All knobs are keyword arguments with defaults: set them at workflow level via
+Step(builder_params={...}). Passed that way they enter the artifact identity,
+so changing a value correctly invalidates the cache of the affected steps.
 """
 
-import logging
 import time
+from pathlib import Path
 
 import awkward as ak
-import cabinetry
 import cloudpickle
 import correctionlib
 from coffea import processor
@@ -16,48 +24,38 @@ import copy
 import hist
 import matplotlib.pyplot as plt
 import numpy as np
-import pyhf
 
 import utils  # contains code for bookkeeping and cosmetics, as well as some boilerplate
 import utils.config
 import utils.metrics
 import utils.plotting
 
-logging.getLogger("cabinetry").setLevel(logging.INFO)
-
-### GLOBAL CONFIGURATION
-# input files per process, set to e.g. 10 (smaller number = faster)
-N_FILES_MAX_PER_SAMPLE = 5
-
-# enable Dask
-USE_DASK = False
-
-# enable ServiceX, specify options
-USE_SERVICEX = False
-USE_SERVICEX_UPROOT_RAW = True # set False to use func_adl instead
-USE_SERVICEX_DOWNLOAD = False # set False to use remote data access
-
-### ML-INFERENCE SETTINGS
-
-# enable ML inference
-USE_INFERENCE = True
-
-# enable inference using NVIDIA Triton server
-USE_TRITON = False
+_MODULE_DIR = Path(__file__).resolve().parent
 
 
 ### FILESET
-def get_fileset():
+def get_fileset(with_failure=False, n_files_max_per_sample=2):
+    # n_files_max_per_sample: input files per process, -1 for all
+    # demo scale: 2 -> 18 files (~19.5M events); 1 -> 9 files (~10.5M events)
     fileset = utils.file_input.construct_fileset(
-    N_FILES_MAX_PER_SAMPLE,
-    use_xcache=False,
-    af_name=utils.config["benchmarking"]["AF_NAME"],  # local files on /data for af_name="ssl-dev"
-    input_from_eos=utils.config["benchmarking"]["INPUT_FROM_EOS"],
-    xcache_atlas_prefix=utils.config["benchmarking"]["XCACHE_ATLAS_PREFIX"],
-)
+        n_files_max_per_sample,
+        use_xcache=False,
+        af_name=utils.config["benchmarking"]["AF_NAME"],  # local files on /data for af_name="ssl-dev"
+        input_from_eos=utils.config["benchmarking"]["INPUT_FROM_EOS"],
+        xcache_atlas_prefix=utils.config["benchmarking"]["XCACHE_ATLAS_PREFIX"],
+    )
+
+    if with_failure:
+        # corrupt one URL on purpose: run_analysis detects the broken host and fails
+        # that chunk in-band (returns Err), so the other chunks succeed and are
+        # cached, and a rerun retries only the failed chunk.
+        files = fileset["single_top_s_chan__nominal"]["files"]
+        files[0] = files[0].replace(
+            "https://xrootd-local.unl.edu:1094", "root://eeeeexrootd-local.unl.edu:1094"
+        )
     print(f"processes in fileset: {list(fileset.keys())}")
-    print(f"\nexample of information in fileset:\n{{\n  'files': [{fileset['ttbar__nominal']['files'][0]}, ...],")
-    print(f"  'metadata': {fileset['ttbar__nominal']['metadata']}\n}}")
+    print(f"\nexample of information in fileset:\n{fileset['single_top_s_chan__nominal']['files'][:2]}")
+    print(f"  'metadata': {fileset['single_top_s_chan__nominal']['metadata']}\n}}")
     return fileset
 
 
@@ -80,10 +78,10 @@ class TtbarAnalysis(processor.ProcessorABC):
                 .Weight()
             )
         
-        self.cset = correctionlib.CorrectionSet.from_file("corrections.json")
+        self.cset = correctionlib.CorrectionSet.from_file(str(_MODULE_DIR / "corrections.json"))
         self.use_inference = use_inference
         
-        # set up attributes only needed if USE_INFERENCE=True
+        # set up attributes only needed if use_inference=True
         if self.use_inference:
             
             # initialize dictionary of hists for ML observables
@@ -313,52 +311,50 @@ class TtbarAnalysis(processor.ProcessorABC):
     def postprocess(self, accumulator):
         return accumulator
 
-def run_analysis(fileset, executor=None): # <- CHANGED, do not forget to pass fileset
+def run_analysis(fileset, executor=None, use_inference=False, use_triton=False):
+    # use_inference: enable ML inference (needs xgboost installed and the models/ directory)
+    # use_triton: run inference against an NVIDIA Triton server instead of local models
+
+    # deliberately poisoned chunk (see get_fileset with_failure): fail in-band.
+    # Returning Err directly keeps the failure deterministic on every executor —
+    # real network failures surfacing through dask/loky preprocessing proved
+    # backend-fragile (see the error-handling issue in coffea-workflow).
+    # NOTE: the marker lives in the chunk's DATA — builder_params reach every
+    # chunk, so a step-level flag would poison the whole run.
+    # Local import: keeps this module importable on workers whose coffea
+    # build predates the Ok/Err result types (parallel_chunks imports it there).
+    from coffea.processor.executor import Err
+
+    broken = [f for ds in fileset.values() for f in ds.get("files", []) if "eeeee" in f]
+    if broken:
+        return Err(OSError(f"[demo] unreachable replica: {broken[0]}"))
+
     NanoAODSchema.warn_missing_crossrefs = False # silences warnings about branches we will not use here
-    if executor:
-        executor=executor
-    else:
-        if USE_DASK:
-            cloudpickle.register_pickle_by_value(utils) # serialize methods and objects in utils so that they can be accessed within the coffea processor
-            # CHANGED TEMPORARILY
-            executor = processor.DaskExecutor(client=utils.clients.get_client(af="coffea_with_result_type")) # dask client for coffea-casa, install my dev coffea on workers
-        else:
-            executor = processor.FuturesExecutor(workers=utils.config["benchmarking"]["NUM_CORES"])
-    
+
+    # serialize utils by value so Dask workers can run the processor without
+    # having a coffea-workflow-demo checkout of their own
+    cloudpickle.register_pickle_by_value(utils)
+
+    if executor is None:
+        # the workflow injects the executor built by the configured facility;
+        # this fallback only applies when the function is called stand-alone
+        executor = processor.FuturesExecutor(workers=utils.config["benchmarking"]["NUM_CORES"])
+
     run = processor.Runner(
                             executor=executor,
                             schema=NanoAODSchema,
                             savemetrics=True,
                             metadata_cache={},
                             chunksize=utils.config["benchmarking"]["CHUNKSIZE"],
-                            skipbadfiles=True, # CHANGED
-                            use_result_type=True, # CHANGED
+                            skipbadfiles=True,
+                            use_result_type=True, # Ok/Err result, needed for chunk-level fault tolerance
                         )
-    
-    if USE_SERVICEX:
-        treename = "servicex"
-    else:
-        treename = "Events"
-    
-    # load local models if not using Triton or FuturesExecutor and models are not yet loaded
-    if USE_INFERENCE and not USE_TRITON and USE_DASK and utils.ml.model_even is None and utils.ml.model_odd is None:
-        utils.ml.load_models()
-    
-    filemeta = run.preprocess(fileset, treename=treename)  # pre-processing
-    
+
     t0 = time.monotonic()
-    # processing
-    result = run(
-        fileset,
-        processor_instance=TtbarAnalysis(USE_INFERENCE, USE_TRITON),
-        treename=treename
-    )
-    
+    result = run(fileset, TtbarAnalysis(use_inference, use_triton), treename="Events")
     exec_time = time.monotonic() - t0
-    
+
     print(f"\nexecution took {exec_time:.2f} seconds")
-    
-    # utils.metrics.track_metrics(metrics, fileset, exec_time, USE_DASK, USE_SERVICEX, N_FILES_MAX_PER_SAMPLE, USE_INFERENCE, USE_TRITON)
 
     return result
 

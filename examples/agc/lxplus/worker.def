@@ -1,0 +1,11 @@
+Bootstrap: docker
+From: gitlab-registry.cern.ch/batch-team/dask-lxplus/lxdask-al9:latest
+
+%post
+    pip install --no-cache-dir \
+"coffea>=2026.7.0" \
+"coffea-workflow" \
+"correctionlib"
+
+%environment
+    export PYTHONNOUSERSITE=1
