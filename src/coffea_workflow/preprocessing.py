@@ -79,8 +79,16 @@ def extract_file_metadata(fname_and_treename, custom_func=None):
     Runs on a Dask worker when a client is available. ``custom_func`` receives
     the open uproot file and must return a JSON-serializable dict; its result
     is merged into every WorkItem's usermeta for that file.
+
+    ``custom_func`` may arrive as a cloudpickle byte blob (see
+    :func:`build_workitems`): it is unpickled here, on the worker, so the user
+    module it references is never imported on the Dask scheduler.
     """
     fname, treename = fname_and_treename
+    if isinstance(custom_func, (bytes, bytearray)):
+        import cloudpickle
+
+        custom_func = cloudpickle.loads(custom_func)
     with uproot.open(fname) as f:
         meta = {
             "fileuuid": f.file.uuid.bytes,
@@ -127,22 +135,25 @@ def build_workitems(fileset, step_size, treename=None, custom_func=None, client=
         }
     )
     # A user-supplied custom_func is embedded in the task graph that client.map
-    # submits. Dask deserializes that graph on the *scheduler*, which would
-    # otherwise reconstruct the callable by reference — importing its defining
-    # module and running that module's top-level imports (e.g. the analysis's
-    # ``import utils``), which are not installed on the scheduler. Register the
-    # module for pickle-by-value so the callable travels as its own code object;
-    # no import of the user module then happens on the scheduler or the workers.
+    # submits, and Dask deserializes that graph on the *scheduler*. If the
+    # callable travels by reference, the scheduler must import its defining
+    # module — running that module's top-level imports (e.g. the analysis's
+    # ``import utils``), which are not installed there — and fails while
+    # "deserializing the task graph". distributed serializes tasks with plain
+    # pickle first, so cloudpickle.register_pickle_by_value does NOT help here.
+    #
+    # Instead, cloudpickle the callable into an opaque bytes blob on the driver
+    # and pass the blob as data (the same trick coffea uses to ship a processor
+    # via heavy_input). Bytes are never unpickled by the scheduler; the blob is
+    # only loaded on the worker — which has the user module — inside
+    # extract_file_metadata. Serial runs keep the live callable, no client.
+    extract_func = custom_func
     if custom_func is not None and client is not None:
-        import sys
-
         import cloudpickle
 
-        mod = sys.modules.get(getattr(custom_func, "__module__", None))
-        if mod is not None:
-            cloudpickle.register_pickle_by_value(mod)
+        extract_func = cloudpickle.dumps(custom_func)
 
-    extract = partial(extract_file_metadata, custom_func=custom_func)
+    extract = partial(extract_file_metadata, custom_func=extract_func)
     if client is not None:
         metas = client.gather(client.map(extract, to_extract))
     else:
