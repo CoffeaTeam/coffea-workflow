@@ -1,5 +1,5 @@
 from .workflow import Step, Workflow
-from .artifacts import Fileset, Analysis, Plotting, CustomArtifact
+from .artifacts import Fileset, Preprocessed, Analysis, Plotting, CustomArtifact
 from .config import RunConfig, ExecutorConfig, FacilityBase
 from .render import run
 from .histserv_utils import detect_histserv_address
@@ -9,6 +9,7 @@ __all__ = [
     "Step",
     "Workflow",
     "Fileset",
+    "Preprocessed",
     "Analysis",
     "Plotting",
     "CustomArtifact",

@@ -126,6 +126,22 @@ def build_workitems(fileset, step_size, treename=None, custom_func=None, client=
             for path, tree in data["files"].items()
         }
     )
+    # A user-supplied custom_func is embedded in the task graph that client.map
+    # submits. Dask deserializes that graph on the *scheduler*, which would
+    # otherwise reconstruct the callable by reference — importing its defining
+    # module and running that module's top-level imports (e.g. the analysis's
+    # ``import utils``), which are not installed on the scheduler. Register the
+    # module for pickle-by-value so the callable travels as its own code object;
+    # no import of the user module then happens on the scheduler or the workers.
+    if custom_func is not None and client is not None:
+        import sys
+
+        import cloudpickle
+
+        mod = sys.modules.get(getattr(custom_func, "__module__", None))
+        if mod is not None:
+            cloudpickle.register_pickle_by_value(mod)
+
     extract = partial(extract_file_metadata, custom_func=custom_func)
     if client is not None:
         metas = client.gather(client.map(extract, to_extract))
