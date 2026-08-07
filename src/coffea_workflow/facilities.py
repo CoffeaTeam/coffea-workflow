@@ -228,6 +228,39 @@ def _zip_syspath_plugin(zip_path: str):
     )
 
 
+def _file_copy_plugin(file_path: str):
+    """
+    Dask WorkerPlugin that writes a plain data file into every worker's local
+    directory (current and future workers), so code running worker-side can open it
+    by name — e.g. a processor doing
+    ``correctionlib.CorrectionSet.from_file("corrections.json")`` when
+    parallel_chunks=True instantiates it on the worker.
+
+    Persistent, unlike client.upload_file(): the plugin is re-applied as each worker
+    connects, so files also reach workers the cluster adds later (adaptive scale-up
+    under parallel_chunks=True). Reading the path eagerly raises IsADirectoryError
+    for a directory, which the caller uses to fall back to the zip plugin.
+    """
+    from dask.distributed import WorkerPlugin
+
+    class _FileCopyPlugin(WorkerPlugin):
+        def __init__(self, name, file_name, data):
+            self.name = name
+            self.file_name = file_name
+            self.data = data
+
+        def setup(self, worker):
+            import os
+            dest = os.path.join(worker.local_directory, self.file_name)
+            with open(dest, "wb") as fh:
+                fh.write(self.data)
+
+    file_name = Path(file_path).name
+    return _FileCopyPlugin(
+        f"coffea-workflow-file-{file_name}", file_name, Path(file_path).read_bytes()
+    )
+
+
 @dataclass
 class CoffeaCasaFactory(FacilityBase):
     """
@@ -290,7 +323,12 @@ class CoffeaCasaFactory(FacilityBase):
         files = (ec.worker_files if ec else ()) or self.worker_files
         for f in files:
             try:
-                client.upload_file(f, load=False)
+                # Persistent worker plugin (see _file_copy_plugin) instead of a
+                # one-shot client.upload_file, so plain data files like corrections.json
+                # also land on workers the cluster adds later (adaptive scale-up under
+                # parallel_chunks=True); otherwise chunks on fresh workers fail to open
+                # the file by name.
+                client.register_plugin(_file_copy_plugin(f))
                 _safe_print(f"Uploaded {f} to workers")
             except IsADirectoryError:
                 folder = Path(f)

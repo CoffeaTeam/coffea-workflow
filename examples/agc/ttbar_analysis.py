@@ -335,7 +335,15 @@ def run_analysis(fileset, executor=None, use_inference=False, use_triton=False, 
     # build predates the Ok/Err result types (parallel_chunks imports it there).
     from coffea.processor.executor import Err
 
-    broken = [f for ds in fileset.values() for f in ds.get("files", []) if "eeeee" in f]
+    # The poisoned-file marker can live in either fileset shape that reaches this
+    # builder: a dict {dataset: {"files": [...] | {path: tree}, ...}} when there is
+    # no Preprocess step upstream, or a list[WorkItem] when there is (one event
+    # range per item — a WorkItem exposes the path as .filename).
+    if isinstance(fileset, dict):
+        candidate_files = [f for ds in fileset.values() for f in ds.get("files", [])]
+    else:
+        candidate_files = [wi.filename for wi in fileset]
+    broken = [f for f in candidate_files if "eeeee" in f]
     if broken:
         return Err(OSError(f"[demo] unreachable replica: {broken[0]}"))
 
