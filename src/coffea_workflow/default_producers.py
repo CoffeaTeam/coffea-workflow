@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from typing import Any
 import cloudpickle
-from .artifacts import Fileset, Analysis, Chunking, ChunkAnalysis, Plotting, CustomArtifact, _builder_key
+from .artifacts import Fileset, Preprocessed, Analysis, Chunking, ChunkAnalysis, Plotting, CustomArtifact, _builder_key
 from .deps import Deps
 from .producers import producer
 from .config import RunConfig
@@ -12,6 +12,10 @@ from coffea.dataset_tools.splitting import hash_fileset
 from .producers_utils import (
     _call_builder, _extract_acc, _load_object, _split_fileset, _load_artifact_output,
     _safe_print, _run_declarative, _validate_runner_params,
+)
+from .preprocessing import (
+    build_workitems, workitems_to_json, workitems_from_json,
+    split_workitems, hash_workitems,
 )
 
 @producer(Fileset)
@@ -27,9 +31,14 @@ def make_fileset(*, art: Fileset, deps: Deps, out: Path, config: RunConfig) -> N
     (out / "fileset.json").write_text(json.dumps(fileset_dict, indent=2, sort_keys=True))
 
 
-@producer(Chunking)
-def split_fileset(*, art: Chunking, deps: Deps, out: Path, config: RunConfig) -> None:
-    out.mkdir(parents=True, exist_ok=True)
+@producer(Preprocessed)
+def make_preprocessed(*, art: Preprocessed, deps: Deps, out: Path, config: RunConfig) -> None:
+    """
+    Preprocess the upstream fileset into WorkItems: open each file once
+    (in parallel on the Dask cluster when one is available), read entry
+    count/uuid plus optional custom per-file metadata, and cut every file
+    into step_size-event ranges.
+    """
     fileset = _load_artifact_output(art.fileset, deps.need(art.fileset))
     if not isinstance(fileset, dict):
         raise TypeError(
@@ -37,20 +46,74 @@ def split_fileset(*, art: Chunking, deps: Deps, out: Path, config: RunConfig) ->
             f"got {type(fileset).__name__}"
         )
 
-    chunks = _split_fileset(
+    custom_func = _load_object(art.custom_builder) if art.custom_builder is not None else None
+    client = getattr(deps.coffea_executor(), "client", None)
+
+    _safe_print(f"\nPreprocessing fileset with step_size={art.step_size} "
+                f"({'parallel via Dask' if client is not None else 'serial'})...")
+    workitems = build_workitems(
         fileset,
-        strategy=config.strategy,
-        datasets=list(config.datasets) if config.datasets else None,
-        percentage=config.percentage,
+        step_size=art.step_size,
+        treename=art.treename,
+        custom_func=custom_func,
+        client=client,
     )
+
+    if art.aggregate_builder is not None:
+        aggregate = _load_object(art.aggregate_builder)
+        updated = aggregate(workitems)
+        if updated is not None:
+            workitems = updated
+
+    _safe_print(f"Preprocessing produced {len(workitems)} WorkItems.")
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "workitems.json").write_text(
+        json.dumps(workitems_to_json(workitems), indent=2, sort_keys=True)
+    )
+
+
+@producer(Chunking)
+def split_fileset(*, art: Chunking, deps: Deps, out: Path, config: RunConfig) -> None:
+    out.mkdir(parents=True, exist_ok=True)
+    upstream = _load_artifact_output(art.fileset, deps.need(art.fileset))
+
+    if art.fileset.type_name == "Preprocessed":
+        # event-level units: split the WorkItem records, one chunk = one JSON list
+        if not isinstance(upstream, list):
+            raise TypeError(
+                f"Preprocessed artifact must produce a list of WorkItem records, "
+                f"got {type(upstream).__name__}"
+            )
+        chunks = split_workitems(
+            upstream,
+            strategy=config.strategy,
+            datasets=list(config.datasets) if config.datasets else None,
+            percentage=config.percentage,
+        )
+        chunk_name = "workitems_chunk_{}.json"
+        hash_chunk = hash_workitems
+    else:
+        if not isinstance(upstream, dict):
+            raise TypeError(
+                f"Upstream artifact '{art.fileset.type_name}' must produce a fileset dict, "
+                f"got {type(upstream).__name__}"
+            )
+        chunks = _split_fileset(
+            upstream,
+            strategy=config.strategy,
+            datasets=list(config.datasets) if config.datasets else None,
+            percentage=config.percentage,
+        )
+        chunk_name = "fileset_chunk_{}.json"
+        hash_chunk = hash_fileset
 
     manifest_files = {}
     for i, chunk in enumerate(chunks):
-        file_name = f"fileset_chunk_{i}.json"
+        file_name = chunk_name.format(i)
         (out / file_name).write_text(json.dumps(chunk, indent=2, sort_keys=True))
         manifest_files[str(i)] = {
             "file": file_name,
-            "hash": hash_fileset(chunk),
+            "hash": hash_chunk(chunk),
         }
 
     (out / "manifest.json").write_text(json.dumps({
@@ -71,6 +134,10 @@ def run_analysis(*, art: ChunkAnalysis, deps: Deps, out: Path, config: RunConfig
     chunking_dir = deps.need(art.chunking)  # directory with chunk jsons
     chunk_path = chunking_dir / art.chunk_file
     chunk_fileset = json.loads(chunk_path.read_text())
+    if isinstance(chunk_fileset, list):
+        # WorkItem chunk (event-level splitting): Runner accepts the premade
+        # list directly and dispatches one executor task per WorkItem
+        chunk_fileset = workitems_from_json(chunk_fileset)
 
     executor = deps.coffea_executor()
     if art.processor is not None:
@@ -94,6 +161,9 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
     """
     # create chunks applying splitting strategy
     # it's an artifact that user is not using - internal
+    # art.fileset may be a plain Fileset (file-level splitting) or a
+    # Preprocessed artifact (event-level WorkItem splitting) — Chunking's
+    # producer branches on the upstream type
     chunking = Chunking(
         fileset=art.fileset,
         split_strategy=config.strategy,
@@ -184,6 +254,20 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
                 pass
 
             from coffea.processor import IterativeExecutor
+            if isinstance(chunk_fileset, list):
+                # WorkItem chunk: rebuild coffea WorkItems from JSON records
+                import base64
+                from coffea.processor.executor import WorkItem
+                chunk_fileset = [
+                    WorkItem(
+                        dataset=r["dataset"], filename=r["filename"],
+                        treename=r["treename"], entrystart=r["entrystart"],
+                        entrystop=r["entrystop"],
+                        fileuuid=base64.b64decode(r["fileuuid"]),
+                        usermeta=r.get("usermeta"),
+                    )
+                    for r in chunk_fileset
+                ]
             fn = cloudpickle.loads(builder_bytes)
             sig = inspect.signature(fn).parameters
             kwargs = {}
@@ -215,6 +299,20 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
                 pass
 
             from coffea.processor import IterativeExecutor, Runner
+            if isinstance(chunk_fileset, list):
+                # WorkItem chunk: rebuild coffea WorkItems from JSON records
+                import base64
+                from coffea.processor.executor import WorkItem
+                chunk_fileset = [
+                    WorkItem(
+                        dataset=r["dataset"], filename=r["filename"],
+                        treename=r["treename"], entrystart=r["entrystart"],
+                        entrystop=r["entrystop"],
+                        fileuuid=base64.b64decode(r["fileuuid"]),
+                        usermeta=r.get("usermeta"),
+                    )
+                    for r in chunk_fileset
+                ]
             proc_cls = cloudpickle.loads(processor_bytes)
             proc = proc_cls(**(processor_params or {}))
             runner = Runner(executor=IterativeExecutor(), use_result_type=True, **(runner_params or {}))
@@ -346,6 +444,18 @@ def make_plot(*, art: Plotting, deps: Deps, out: Path, config: RunConfig) -> Non
     fn = _load_object(art.builder)
     if config.histserv_connection_info is not None:
         plot_result = _call_builder(fn, config=config, builder_params=dict(art.builder_params))
+    elif isinstance(payload, dict) and payload.get("n_chunks_ok") == 0:
+        n_failed = len(payload.get("failures", []))
+        _safe_print(
+            f"Skipping plotting builder {art.builder}: the upstream Analysis produced "
+            f"0 successful chunks ({n_failed} failed) — nothing to plot."
+        )
+        plot_result = {
+            "skipped": True,
+            "reason": "no successful analysis chunks",
+            "n_chunks_total": payload.get("n_chunks_total"),
+            "failures": payload.get("failures", []),
+        }
     else:
         plot_result = _call_builder(fn, payload, builder_params=dict(art.builder_params))
     (out / "payload.pkl").write_bytes(cloudpickle.dumps(plot_result))
