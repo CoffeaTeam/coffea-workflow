@@ -444,6 +444,18 @@ def make_plot(*, art: Plotting, deps: Deps, out: Path, config: RunConfig) -> Non
     fn = _load_object(art.builder)
     if config.histserv_connection_info is not None:
         plot_result = _call_builder(fn, config=config, builder_params=dict(art.builder_params))
+    elif isinstance(payload, dict) and payload.get("n_chunks_ok") == 0:
+        n_failed = len(payload.get("failures", []))
+        _safe_print(
+            f"Skipping plotting builder {art.builder}: the upstream Analysis produced "
+            f"0 successful chunks ({n_failed} failed) — nothing to plot."
+        )
+        plot_result = {
+            "skipped": True,
+            "reason": "no successful analysis chunks",
+            "n_chunks_total": payload.get("n_chunks_total"),
+            "failures": payload.get("failures", []),
+        }
     else:
         plot_result = _call_builder(fn, payload, builder_params=dict(art.builder_params))
     (out / "payload.pkl").write_bytes(cloudpickle.dumps(plot_result))
