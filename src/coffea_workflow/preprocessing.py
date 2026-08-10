@@ -28,7 +28,6 @@ import hashlib
 import json
 import math
 import warnings
-from functools import partial
 
 import uproot
 from coffea.processor.executor import WorkItem
@@ -153,11 +152,14 @@ def build_workitems(fileset, step_size, treename=None, custom_func=None, client=
 
         extract_func = cloudpickle.dumps(custom_func)
 
-    extract = partial(extract_file_metadata, custom_func=extract_func)
+    def _extract(fname_and_treename):
+        from coffea_workflow.preprocessing import extract_file_metadata
+        return extract_file_metadata(fname_and_treename, custom_func=extract_func)
+
     if client is not None:
-        metas = client.gather(client.map(extract, to_extract))
+        metas = client.gather(client.map(_extract, to_extract))
     else:
-        metas = [extract(entry) for entry in to_extract]
+        metas = [_extract(entry) for entry in to_extract]
     meta_by_file = {fname: meta for result in metas for fname, meta in result.items()}
 
     workitems = []
