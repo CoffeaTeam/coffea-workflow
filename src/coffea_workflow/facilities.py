@@ -228,6 +228,92 @@ def _zip_syspath_plugin(zip_path: str):
     )
 
 
+def _file_copy_plugin(file_path: str):
+    """
+    Dask WorkerPlugin that writes a plain data file into every worker's local
+    directory (current and future workers), so code running worker-side can open it
+    by name — e.g. a processor doing
+    ``correctionlib.CorrectionSet.from_file("corrections.json")`` when
+    parallel_chunks=True instantiates it on the worker.
+
+    Persistent, unlike client.upload_file(): the plugin is re-applied as each worker
+    connects, so files also reach workers the cluster adds later (adaptive scale-up
+    under parallel_chunks=True). Reading the path eagerly raises IsADirectoryError
+    for a directory, which the caller uses to fall back to the zip plugin.
+    """
+    from dask.distributed import WorkerPlugin
+
+    class _FileCopyPlugin(WorkerPlugin):
+        def __init__(self, name, file_name, data):
+            self.name = name
+            self.file_name = file_name
+            self.data = data
+
+        def setup(self, worker):
+            import os
+            dest = os.path.join(worker.local_directory, self.file_name)
+            with open(dest, "wb") as fh:
+                fh.write(self.data)
+
+    file_name = Path(file_path).name
+    return _FileCopyPlugin(
+        f"coffea-workflow-file-{file_name}", file_name, Path(file_path).read_bytes()
+    )
+
+
+def _credential_forward_plugin():
+    """
+    Read the driver's grid credential (X.509 proxy and/or WLCG bearer token) and return
+    ``(plugin, kinds)`` — a persistent Dask WorkerPlugin that writes it onto every worker
+    (current and future) and points XRootD at it via the standard env vars — or
+    ``(None, [])`` when nothing is found.
+
+    Needed when file opens happen worker-side (e.g. the Preprocess step's parallel
+    file-opening): a proxy/token present only on the driver leaves workers unable to
+    authenticate to storage ("authentication failed" from XRootD). Checks, in order:
+    ``$X509_USER_PROXY`` then ``/tmp/x509up_u<uid>`` for the proxy, ``$BEARER_TOKEN_FILE``
+    for a token file, ``$BEARER_TOKEN`` for an inline token. The credential is captured
+    as a snapshot here on the driver; refresh it and rebuild the executor if it expires
+    mid-session.
+    """
+    import os
+
+    files = {}  # env var -> (dest filename, bytes)
+    x509 = os.environ.get("X509_USER_PROXY") or f"/tmp/x509up_u{os.getuid()}"
+    if os.path.exists(x509):
+        files["X509_USER_PROXY"] = ("x509up", Path(x509).read_bytes())
+    tok_file = os.environ.get("BEARER_TOKEN_FILE")
+    if tok_file and os.path.exists(tok_file):
+        files["BEARER_TOKEN_FILE"] = (Path(tok_file).name, Path(tok_file).read_bytes())
+    tok_inline = os.environ.get("BEARER_TOKEN")
+
+    if not files and not tok_inline:
+        return None, []
+
+    from dask.distributed import WorkerPlugin
+
+    class _CredentialPlugin(WorkerPlugin):
+        name = "coffea-workflow-credentials"
+
+        def __init__(self, files, tok_inline):
+            self.files = files
+            self.tok_inline = tok_inline
+
+        def setup(self, worker):
+            import os
+            for env_var, (dest_name, data) in self.files.items():
+                dest = os.path.join(worker.local_directory, dest_name)
+                with open(dest, "wb") as fh:
+                    fh.write(data)
+                os.chmod(dest, 0o600)  # GSI/token readers refuse group/world-readable files
+                os.environ[env_var] = dest
+            if self.tok_inline:
+                os.environ["BEARER_TOKEN"] = self.tok_inline
+
+    kinds = list(files.keys()) + (["BEARER_TOKEN (inline)"] if tok_inline else [])
+    return _CredentialPlugin(files, tok_inline), kinds
+
+
 @dataclass
 class CoffeaCasaFactory(FacilityBase):
     """
@@ -237,12 +323,18 @@ class CoffeaCasaFactory(FacilityBase):
 
     For DaskExecutor (default): connects to the pre-configured Dask scheduler
     at tls://localhost:8786. Other executor types are created directly.
-    # TODO: optimised ways to run the analysis? optimised number of batches? split_strategy?
+
+    forward_credentials=True copies the driver's grid credential (X.509 proxy and/or
+    WLCG bearer token) onto the workers when the Dask client is built. Use it when file
+    opens happen worker-side (e.g. the Preprocess step) and the facility does not already
+    propagate credentials to worker pods, so XRootD reads fail with "authentication
+    failed". Off by default; the credential is a snapshot taken at build time.
     """
     default_executor_type: ClassVar[str] = "DaskExecutor"
     scheduler_address: str = "tls://localhost:8786"
     worker_packages: tuple[str, ...] = ()
     worker_files: tuple[str, ...] = ()
+    forward_credentials: bool = False
 
     def __post_init__(self):
         self.worker_packages = tuple(self.worker_packages)
@@ -285,12 +377,32 @@ class CoffeaCasaFactory(FacilityBase):
         from dask.distributed import Client, PipInstall
 
         client = Client(self.scheduler_address)
-        
+
+        # Forward the driver's grid credential to the workers if requested. File opens in
+        # the Preprocess step happen worker-side, so a proxy/token present only on the
+        # driver leaves workers unable to authenticate to storage.
+        if self.forward_credentials:
+            plugin, kinds = _credential_forward_plugin()
+            if plugin is not None:
+                client.register_plugin(plugin)
+                _safe_print(f"Forwarded credentials to workers: {', '.join(kinds)}")
+            else:
+                _safe_print(
+                    "forward_credentials=True but no credential found on the driver "
+                    "(checked $X509_USER_PROXY, /tmp/x509up_u<uid>, $BEARER_TOKEN_FILE, "
+                    "$BEARER_TOKEN) — create/refresh it first."
+                )
+
         # Upload files before installing packages
         files = (ec.worker_files if ec else ()) or self.worker_files
         for f in files:
             try:
-                client.upload_file(f, load=False)
+                # Persistent worker plugin (see _file_copy_plugin) instead of a
+                # one-shot client.upload_file, so plain data files like corrections.json
+                # also land on workers the cluster adds later (adaptive scale-up under
+                # parallel_chunks=True); otherwise chunks on fresh workers fail to open
+                # the file by name.
+                client.register_plugin(_file_copy_plugin(f))
                 _safe_print(f"Uploaded {f} to workers")
             except IsADirectoryError:
                 folder = Path(f)

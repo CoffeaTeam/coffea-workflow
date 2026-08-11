@@ -58,7 +58,17 @@ def get_fileset(with_failure=False, n_files_max_per_sample=2):
     print(f"  'metadata': {fileset['single_top_s_chan__nominal']['metadata']}\n}}")
     return fileset
 
-
+### PREPROCESSING — custom_builder demo
+def extract_sumw(f):
+    """
+    analog of the ATLAS example's sum-of-weights for testing
+    """
+    try:
+        return {"sumw": float(f["Runs"]["genEventSumw"].array(library="np").sum())}
+    except KeyError:
+        # data has no Runs/genEventSumw tree or branch; treat missing as 0.0
+        print("data has no Runs/genEventSumw tree or branch; treat missing as 0.0")
+        return {"sumw": 0.0}
 
 ### ANALYSIS
 class TtbarAnalysis(processor.ProcessorABC):
@@ -311,7 +321,7 @@ class TtbarAnalysis(processor.ProcessorABC):
     def postprocess(self, accumulator):
         return accumulator
 
-def run_analysis(fileset, executor=None, use_inference=False, use_triton=False):
+def run_analysis(fileset, executor=None, use_inference=False, use_triton=False, use_servicex=False):
     # use_inference: enable ML inference (needs xgboost installed and the models/ directory)
     # use_triton: run inference against an NVIDIA Triton server instead of local models
 
@@ -325,7 +335,15 @@ def run_analysis(fileset, executor=None, use_inference=False, use_triton=False):
     # build predates the Ok/Err result types (parallel_chunks imports it there).
     from coffea.processor.executor import Err
 
-    broken = [f for ds in fileset.values() for f in ds.get("files", []) if "eeeee" in f]
+    # The poisoned-file marker can live in either fileset shape that reaches this
+    # builder: a dict {dataset: {"files": [...] | {path: tree}, ...}} when there is
+    # no Preprocess step upstream, or a list[WorkItem] when there is (one event
+    # range per item — a WorkItem exposes the path as .filename).
+    if isinstance(fileset, dict):
+        candidate_files = [f for ds in fileset.values() for f in ds.get("files", [])]
+    else:
+        candidate_files = [wi.filename for wi in fileset]
+    broken = [f for f in candidate_files if "eeeee" in f]
     if broken:
         return Err(OSError(f"[demo] unreachable replica: {broken[0]}"))
 
@@ -350,8 +368,23 @@ def run_analysis(fileset, executor=None, use_inference=False, use_triton=False):
                             use_result_type=True, # Ok/Err result, needed for chunk-level fault tolerance
                         )
 
+    if use_servicex:
+        treename = "servicex"
+    else:
+        treename = "Events"
+    
+    # load local models if not using Triton or FuturesExecutor and models are not yet loaded
+    if use_inference and not use_triton and utils.ml.model_even is None and utils.ml.model_odd is None:
+        utils.ml.load_models()
+    
+    # When the workflow has a Preprocessed step upstream, `fileset` is already a
+    # premade list of coffea WorkItems (event ranges) — skip coffea's own file-level
+    # preprocessing. Runner accepts the WorkItem list directly below.
+    if isinstance(fileset, dict):
+        filemeta = run.preprocess(fileset, treename=treename)  # pre-processing
+        
     t0 = time.monotonic()
-    result = run(fileset, TtbarAnalysis(use_inference, use_triton), treename="Events")
+    result = run(fileset, TtbarAnalysis(use_inference, use_triton), treename=treename)
     exec_time = time.monotonic() - t0
 
     print(f"\nexecution took {exec_time:.2f} seconds")
@@ -368,4 +401,4 @@ def plotting_1(result): # <- CHANGED, do not forget to pass result
     all_histograms["hist_dict"]["4j1b"][120j::hist.rebin(2), :, "nominal"].stack("process")[::-1].plot(stack=True, histtype="fill", linewidth=1, edgecolor="grey")
     plt.legend(frameon=False)
     plt.title(r"$\geq$ 4 jets, 1 b-tag")
-    plt.xlabel("$H_T$ [GeV]");
+    plt.xlabel("$H_T$ [GeV]")
