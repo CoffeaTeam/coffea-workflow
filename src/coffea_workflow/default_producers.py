@@ -187,9 +187,20 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
         chunks_entries = chunks_entries[:n]
         _safe_print(f"chunk_fraction={config.chunk_fraction}: processing {n} of {manifest['n_chunks']} chunks")
 
+    def _chunk_event_count(chunk_file):
+        """Total events in a WorkItem chunk; None for file-level chunks (unknown until open)."""
+        try:
+            data = json.loads((chunk_dir / chunk_file).read_text())
+        except (OSError, ValueError):
+            return None
+        if isinstance(data, list):
+            return sum(int(r["entrystop"]) - int(r["entrystart"]) for r in data)
+        return None
+
     merged_acc = None
     metrics_merged = None
     failures = []
+    total_events = 0
 
     is_declarative = art.processor is not None
     if is_declarative:
@@ -337,8 +348,11 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
             if not deps._executor.exists(ca, config=config)
         ]
 
+        n_cached = len(chunk_arts) - len(uncached_indices)
+        if n_cached:
+            _safe_print(f"{n_cached} of {len(chunk_arts)} chunks already processed — reusing cached results.")
         if uncached_indices:
-            _safe_print(f"Submitting {len(uncached_indices)} chunks in parallel...")
+            _safe_print(f"Submitting {len(uncached_indices)} uncached chunks in parallel...")
             futures = {}
             for i in uncached_indices:
                 ca = chunk_arts[i]
@@ -379,15 +393,24 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
                     (out_dir / ".success").touch()
                 deps._executor._session_cache.add(out_dir)
 
+        uncached_set = set(uncached_indices)
         for i, (entry, ca) in enumerate(zip(chunks_entries, chunk_arts)):
             chunk_file = entry["file"]
             chunk_out_dir = deps._executor.path_for(ca)
             _safe_print("------------------------------------")
             _safe_print(f"Processing {chunk_file}")
+            n_events = _chunk_event_count(chunk_file)
             result = cloudpickle.loads((chunk_out_dir / "payload.pkl").read_bytes())
             if result.is_ok():
-                _safe_print("Successfully processed!")
+                _safe_print("Loaded from cache" if i not in uncached_set else "Successfully processed!")
                 acc, metrics = _extract_acc(result)
+                if n_events is None and isinstance(metrics, dict):
+                    # file-level chunk: entry count isn't known until coffea opens the files,
+                    # but savemetrics recorded it — use it for the summary total (not printed
+                    # per chunk).
+                    n_events = metrics.get("entries")
+                if n_events:
+                    total_events += n_events
                 merged_acc = accumulate([acc], accum=merged_acc)
                 metrics_merged = accumulate([metrics], accum=metrics_merged)
             else:
@@ -398,15 +421,23 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
             chunk_file = entry["file"]
             _safe_print("------------------------------------")
             _safe_print(f"Processing {chunk_file}")
+            n_events = _chunk_event_count(chunk_file)
             chunk_art = _make_chunk_artifact(entry)
-            # process chunk
+            # process chunk (cached result is reused when available)
+            cached = deps._executor.exists(chunk_art, config=config)
             chunk_out_dir = deps.need(chunk_art)
             result = cloudpickle.loads((chunk_out_dir / "payload.pkl").read_bytes())
-    
-            #TODO: if config contains histserv_connection_info, then use the connection and add to the hist server, otherwise 
+
+            #TODO: if config contains histserv_connection_info, then use the connection and add to the hist server, otherwise
             if result.is_ok():
-                _safe_print("Successfully processed!")
+                _safe_print("Loaded from cache" if cached else "Successfully processed!")
                 acc, metrics = _extract_acc(result)
+                if n_events is None and isinstance(metrics, dict):
+                    # file-level chunk: entry count recorded by savemetrics — used for the
+                    # summary total (not printed per chunk).
+                    n_events = metrics.get("entries")
+                if n_events:
+                    total_events += n_events
                 if config.hist_client is not None:
                     # acc is already connection_info (returned directly from run_analysis)
                     # passing remote_hist directly is not possible because it holds a live gRPC connection, which is not picklable
@@ -423,6 +454,9 @@ def execute_analysis(*, art: Analysis, deps: Deps, out: Path, config: RunConfig)
         "builder": _builder_key(art.builder) if art.builder is not None else None,
         "processor": _builder_key(art.processor) if art.processor is not None else None,
         "n_chunks_total": len(chunks_entries),
+        "n_chunks_in_fileset": manifest["n_chunks"],
+        "chunk_fraction": config.chunk_fraction,
+        "n_events_total": total_events or None,
         "n_chunks_ok": 0 if merged_acc is None else (len(chunks_entries) - len(failures)),
         "failures": failures,
         "processor_result": (merged_acc, metrics_merged),

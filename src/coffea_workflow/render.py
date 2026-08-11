@@ -102,10 +102,21 @@ def _print_summary(step_results: dict) -> None:
     for name, (step_type, result) in step_results.items():
         if step_type is Analysis and result is not None:
             ok = result["n_chunks_ok"]
-            total = result["n_chunks_total"]
+            processed = result["n_chunks_total"]
+            in_fileset = result.get("n_chunks_in_fileset", processed)
+            frac = result.get("chunk_fraction")
             failures = result["failures"]
             marker = "✓" if not failures else "!"
-            _safe_print(f"  {marker}  {name:<30} {step_type.__name__:<20} {ok}/{total} chunks OK")
+            line = f"  {marker}  {name:<30} {step_type.__name__:<20} {ok}/{processed} chunks OK"
+            if in_fileset and processed < in_fileset:
+                pct = round(100 * processed / in_fileset)
+                note = f"{processed} of {in_fileset} in fileset ({pct}%"
+                note += f", chunk_fraction={frac})" if frac is not None else ")"
+                line += f"  ·  {note}"
+            n_ev = result.get("n_events_total")
+            if n_ev:
+                line += f"  ·  {n_ev:,} events"
+            _safe_print(line)
             for f in failures:
                 _safe_print(f"       FAILED {f['chunk_file']}: {f['error']}")
         else:
