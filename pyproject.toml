@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "coffea-workflow"
-version = "0.1.0"
+version = "0.2.0"
 description = "A workflow manager and HEP-specific extension for coffea analyses, providing partial result caching, facility factories, and configurable chunk dispatch."
 readme = "README.md"
 authors = [
