@@ -5,6 +5,7 @@ A workflow manager and HEP-specific extension for [coffea](https://github.com/sc
 - **Partial results** — split your fileset into independently cached chunks; if some fail you keep the rest, and only the failed chunks are retried on the next run
 - **Facility factories** — one-line switching between local execution, [coffea-casa](https://coffea-casa.readthedocs.io), and CERN lxplus (HTCondor) without changing your analysis code
 - **Execution control** — choose between sequential and parallel chunk submission, tune executor type and worker count per facility
+- **Event-level preprocessing (optional)** — open every file once, compute per-file/per-dataset metadata, and cut the fileset into even event-range WorkItems before analysis
 
 Your analysis code stays unchanged and fully separate from the execution logic. The only shift in thinking is structural: instead of one monolithic script, you organise the code around the natural stages of a HEP pipeline — fileset discovery, running the processor, plotting, and so on — and hand each stage to the workflow as a step. How you write each function is up to you.
 
@@ -170,6 +171,24 @@ generate_apptainer_def(extra_packages=("correctionlib==2.1.0",))
 
 See [examples/showcase/facilities/](https://github.com/CoffeaTeam/coffea-workflow/tree/main/examples/showcase/facilities/) for a full worked example.
 
+#### Shipping code, data, and credentials to coffea-casa workers
+
+When code runs on the Dask workers — the `Preprocessed` step opens files there, and a processor may read a corrections file — `CoffeaCasaFactory` can provision what the workers need:
+
+```python
+facility = facilities.CoffeaCasaFactory(
+    worker_packages=("atlas_schema", "coffea>=2026.7.0"),        # pip-installed on workers
+    worker_files=("analysis.py", "utils", "corrections.json"),   # uploaded to workers
+    forward_credentials=True,                                    # copy the driver's proxy/token to workers
+)
+```
+
+- **`worker_packages`** — pip specs installed on the workers via a `PipInstall` plugin.
+- **`worker_files`** — files/directories uploaded to every worker through **persistent** worker plugins, so they also reach workers the cluster adds later under adaptive scale-up (`parallel_chunks=True`). Directories are zipped and put on `sys.path`; plain files (e.g. `corrections.json`) land in the worker's working directory.
+- **`forward_credentials=True`** — copies the driver's grid credential (`X509_USER_PROXY` and/or a WLCG `BEARER_TOKEN`) onto each worker, so worker-side XRootD reads (e.g. in the `Preprocessed` step) can authenticate. The credential is a snapshot taken when the client is built — refresh it and re-run if it expires.
+
+`worker_packages` and `worker_files` may equivalently be set on `ExecutorConfig`.
+
 ---
 
 ### Sequential vs Parallel Chunk Execution
@@ -208,10 +227,11 @@ A worked analysis of the trade-offs is in [examples/showcase/optimisation/](http
 coffea-workflow/
 ├── src/
 │   └── coffea_workflow/
-│       ├── __init__.py            # public API: Step, Workflow, run, RunConfig, Fileset, Analysis,
-│       │                          #   Plotting, ExecutorConfig, facilities, detect_histserv_address
-│       ├── artifacts.py           # Artifact classes (Fileset, Analysis, Plotting,
+│       ├── __init__.py            # public API: Step, Workflow, run, RunConfig, Fileset, Preprocessed,
+│       │                          #   Analysis, Plotting, ExecutorConfig, facilities, detect_histserv_address
+│       ├── artifacts.py           # Artifact classes (Fileset, Preprocessed, Analysis, Plotting,
 │       │                          #   Chunking, ChunkAnalysis, CustomArtifact)
+│       ├── preprocessing.py       # Preprocessed -> WorkItems: open files once, cut event ranges, run hooks
 │       ├── identity.py            # Deterministic hashing of an artifact's identity
 │       ├── config.py              # RunConfig, ExecutorConfig, FacilityBase
 │       ├── facilities.py          # LocalFactory, CoffeaCasaFactory, LxplusFactory
@@ -306,6 +326,45 @@ Rule of thumb: if `processor=` + `processor_params=` + `runner_params=` describe
 
 ---
 
+### The `Preprocessed` step: event-level chunking
+
+By default the fileset is split at **file** granularity — a chunk is a subset of files, and coffea's `Runner` opens and counts events inside each chunk at run time. An optional **`Preprocessed`** step changes this to **event** granularity: it opens every file **once** up front (in parallel on the Dask cluster), reads each file's entry count and uuid, and cuts the fileset into even `step_size`-event **WorkItems**. The `Analysis` step then receives a premade list of WorkItems and dispatches one coffea task per item — no re-opening, no re-counting.
+
+Insert it between `Fileset` and `Analysis`:
+
+```python
+from coffea_workflow import Preprocessed
+
+step_preprocess = Step(
+    name="Preprocess", step_type=Preprocessed,
+    step_size=100_000,        # target events per WorkItem
+    treename="Events",        # TTree to open
+    input="fileset", output="workitems",
+)
+workflow.add(step_preprocess, depends_on=[step_fileset])
+workflow.add(step_analysis,   depends_on=[step_preprocess])   # Analysis now consumes the WorkItems
+```
+
+**Why use it:** even-sized event chunks regardless of how many events each file holds (so work balances across workers), and per-file metadata computed once and carried into the analysis.
+
+**Optional hooks:**
+
+- **`custom_builder(uproot_file) -> dict`** — runs on the worker as each file is opened; its dict is merged into every WorkItem's `usermeta` and reaches the processor as `events.metadata[...]` (e.g. a per-file sum-of-weights).
+- **`aggregate_builder(workitems)`** — runs once on the driver over all WorkItems, for cross-file totals (e.g. dataset-level sum-of-weights written back into each item's `usermeta`).
+
+```python
+step_preprocess = Step(
+    name="Preprocess", step_type=Preprocessed, step_size=100_000, treename="Events",
+    custom_builder="analysis:extract_sumw",       # per-file hook
+    aggregate_builder="analysis:aggregate_sumw",  # cross-file aggregation
+    input="fileset", output="workitems",
+)
+```
+
+When a `Preprocessed` step is upstream, workflow chunks are made of **WorkItems** (event ranges) rather than whole files, so `by_dataset` and `percentage` splitting apply at event-range granularity. The analysis builder your `Analysis` step calls then receives a `list` of coffea `WorkItem`s for the chunk (instead of a fileset dict) — coffea's `Runner` accepts it directly. See [examples/agc/workflow_preprocessing.ipynb](https://github.com/CoffeaTeam/coffea-workflow/tree/main/examples/agc/workflow_preprocessing.ipynb) for a full worked example.
+
+---
+
 ### Artifacts
 
 An **Artifact** is the typed, hashable representation of one unit of work and its output. The executor stores every artifact at:
@@ -319,14 +378,15 @@ An **Artifact** is the typed, hashable representation of one unit of work and it
 | Artifact | Description |
 |---|---|
 | `Fileset` | Entry point. Builder returns a standard coffea fileset dict. Cached as `fileset.json`. |
+| `Preprocessed` | Optional. Opens each file once, computes per-file/per-dataset metadata (via `custom_builder`/`aggregate_builder`), and cuts the fileset into `step_size`-event WorkItems. Cached as `workitems.json`. |
 | `Analysis` | Central stage. Orchestrates chunking, runs your analysis function per chunk, merges results. Returns `payload.pkl`. |
-| `Plotting` | Consumes merged `Analysis` output. Always re-runs (`always_rerun = True`) — plots are fast and expected fresh. |
+| `Plotting` | Consumes merged `Analysis` output. Always re-runs (`always_rerun = True`) — plots are fast and expected fresh. Skipped (with a recorded reason) when the upstream `Analysis` produced 0 successful chunks, so an all-failed run still completes and reports rather than crashing. |
 
 **Internal artifacts** (created automatically, never user-facing):
 
 | Artifact | Description |
 |---|---|
-| `Chunking` | Splits the `Fileset` into `fileset_chunk_N.json` files per the configured strategy. |
+| `Chunking` | Splits the upstream into chunk files per the configured strategy — `fileset_chunk_N.json` from a `Fileset`, or `workitems_chunk_N.json` from a `Preprocessed` step. |
 | `ChunkAnalysis` | Processes one chunk. Writes `.success` on success; its absence triggers a retry on the next run. |
 
 ---
@@ -341,6 +401,7 @@ class RunConfig:
     strategy: "by_dataset" | None = None
     percentage: int | None = None
     datasets: tuple[str, ...] | None = None
+    chunk_fraction: float | None = None
     cache_dir: Path = Path(".cache")
     facility: FacilityBase | None = None
     executor_config: ExecutorConfig | None = None
@@ -355,6 +416,7 @@ class RunConfig:
 | `strategy` | `"by_dataset"` or `None` | `None` | `"by_dataset"` → one chunk per dataset; `None` → all datasets together |
 | `percentage` | `int` or `None` | `None` | Each chunk covers this % of each dataset's files (must divide 100 evenly, e.g. 20, 25, 50) |
 | `datasets` | `tuple[str, ...]` or `None` | `None` | Restrict to named datasets only; accepts a list (auto-converted to tuple) |
+| `chunk_fraction` | `float` or `None` | `None` | Process only the first fraction `(0.0, 1.0]` of chunks — quick partial runs (e.g. `0.1` = first 10%) |
 | `cache_dir` | `Path` | `Path(".cache")` | Root of the content-addressable store |
 | `facility` | `FacilityBase` or `None` | `None` | Which facility factory to use (local, coffea-casa, lxplus) |
 | `executor_config` | `ExecutorConfig` or `None` | `None` | Fine-grained executor control (type, workers) |
@@ -378,6 +440,7 @@ A **producer** is the framework function that materialises an artifact. Users ne
 | Artifact | Cache sentinel | Re-run condition |
 |---|---|---|
 | `Fileset` | `fileset.json` | inputs changed |
+| `Preprocessed` | `workitems.json` | inputs changed |
 | `Chunking` | `manifest.json` | inputs changed |
 | `ChunkAnalysis` | `.success` | `.success` absent |
 | `Analysis` | `payload.pkl` + no `.has_failures` | `.has_failures` present |
@@ -438,6 +501,7 @@ See [examples/coffea_workflow_histserv/](https://github.com/CoffeaTeam/coffea-wo
 | [examples/coffea_workflow/](https://github.com/CoffeaTeam/coffea-workflow/tree/main/examples/coffea_workflow/) | Simple accumulator workflow (no histserv) |
 | [examples/coffea_workflow_histserv/](https://github.com/CoffeaTeam/coffea-workflow/tree/main/examples/coffea_workflow_histserv/) | Same workflow with the histserv histogram server |
 | [examples/agc/workflow_coffea_casa.ipynb](https://github.com/CoffeaTeam/coffea-workflow/tree/main/examples/agc/workflow_coffea_casa.ipynb) | Full AGC ttbar analysis |
+| [examples/agc/workflow_preprocessing.ipynb](https://github.com/CoffeaTeam/coffea-workflow/tree/main/examples/agc/workflow_preprocessing.ipynb) | AGC ttbar with an explicit `Preprocessed` step (per-file sum-of-weights hook) |
 | [examples/agc/workflow_coffea_casa_histserv.ipynb](https://github.com/CoffeaTeam/coffea-workflow/tree/main/examples/agc/workflow_coffea_casa_histserv.ipynb) | Same AGC ttbar analysis, region histograms streamed to histserv |
 
 ---
